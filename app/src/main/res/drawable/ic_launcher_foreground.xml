@@ -1,0 +1,113 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:scaleX="1.75"
+        android:scaleY="1.75"
+        android:translateX="-40"
+        android:translateY="0">
+
+        <!-- Water Meter Base Circle -->
+        <path
+            android:fillColor="#1565C0"
+            android:pathData="M54,30 m-22,0 a22,22 0,1,1 44,0 a22,22 0,1,1 -44,0" />
+
+        <!-- Inner meter circle -->
+        <path
+            android:fillColor="#E3F2FD"
+            android:pathData="M54,30 m-18,0 a18,18 0,1,1 36,0 a18,18 0,1,1 -36,0" />
+
+        <!-- Meter gauge ring -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#1565C0"
+            android:strokeWidth="2"
+            android:pathData="M54,30 m-18,0 a18,18 0,1,1 36,0 a18,18 0,1,1 -36,0" />
+
+        <!-- Meter tick marks (12 positions like a clock) -->
+        <path
+            android:fillColor="#1565C0"
+            android:pathData="M54,14 L54,18"
+            android:strokeWidth="1.5"
+            android:strokeColor="#1565C0" />
+        <path
+            android:fillColor="#1565C0"
+            android:pathData="M70,30 L66,30"
+            android:strokeWidth="1.5"
+            android:strokeColor="#1565C0" />
+        <path
+            android:fillColor="#1565C0"
+            android:pathData="M54,46 L54,42"
+            android:strokeWidth="1.5"
+            android:strokeColor="#1565C0" />
+        <path
+            android:fillColor="#1565C0"
+            android:pathData="M38,30 L42,30"
+            android:strokeWidth="1.5"
+            android:strokeColor="#1565C0" />
+
+        <!-- Diagonal tick marks -->
+        <path
+            android:fillColor="#1565C0"
+            android:pathData="M63,18 L61,20"
+            android:strokeWidth="1.2"
+            android:strokeColor="#1565C0" />
+        <path
+            android:fillColor="#1565C0"
+            android:pathData="M63,42 L61,40"
+            android:strokeWidth="1.2"
+            android:strokeColor="#1565C0" />
+        <path
+            android:fillColor="#1565C0"
+            android:pathData="M45,18 L47,20"
+            android:strokeWidth="1.2"
+            android:strokeColor="#1565C0" />
+        <path
+            android:fillColor="#1565C0"
+            android:pathData="M45,42 L47,40"
+            android:strokeWidth="1.2"
+            android:strokeColor="#1565C0" />
+
+        <!-- Meter needle/pointer -->
+        <path
+            android:fillColor="#FF6B6B"
+            android:pathData="M54,30 L60,24 L61,25 L54,32 Z" />
+
+        <!-- Center pivot point -->
+        <path
+            android:fillColor="#1565C0"
+            android:pathData="M54,30 m-2,0 a2,2 0,1,1 4,0 a2,2 0,1,1 -4,0" />
+
+        <!-- Digital display rectangle -->
+        <path
+            android:fillColor="#263238"
+            android:pathData="M44,35 L64,35 L64,40 L44,40 Z"
+            android:strokeColor="#1565C0"
+            android:strokeWidth="0.5" />
+
+        <!-- Digital numbers simulation (simplified as rectangles) -->
+        <path
+            android:fillColor="#4FC3F7"
+            android:pathData="M46,36.5 L48,36.5 L48,38.5 L46,38.5 Z" />
+        <path
+            android:fillColor="#4FC3F7"
+            android:pathData="M49,36.5 L51,36.5 L51,38.5 L49,38.5 Z" />
+        <path
+            android:fillColor="#4FC3F7"
+            android:pathData="M52,36.5 L54,36.5 L54,38.5 L52,38.5 Z" />
+        <path
+            android:fillColor="#4FC3F7"
+            android:pathData="M55,36.5 L57,36.5 L57,38.5 L55,38.5 Z" />
+        <path
+            android:fillColor="#4FC3F7"
+            android:pathData="M58,36.5 L60,36.5 L60,38.5 L58,38.5 Z" />
+        <path
+            android:fillColor="#4FC3F7"
+            android:pathData="M61,36.5 L62,36.5 L62,38.5 L61,38.5 Z" />
+
+
+    </group>
+</vector>
