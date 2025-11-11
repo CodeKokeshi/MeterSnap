@@ -10,6 +10,14 @@ object WaterRates {
     // January 2025 Rates for Carmona Water District
     // Note: First tier (1-10 m³) is a MINIMUM CHARGE, not per cubic meter rate
     
+    // ESF (Environmental Service Fee) rates per type
+    const val RESIDENTIAL_ESF = 3.50
+    const val COMMERCIAL_ESF = 3.50
+    const val GOVERNMENT_ESF = 3.50
+    const val SEMI_COMMERCIAL_A_ESF = 3.50
+    const val SEMI_COMMERCIAL_B_ESF = 3.50
+    const val SEMI_COMMERCIAL_C_ESF = 3.50
+    
     val RESIDENTIAL_RATES = listOf(
         TierRate(1, 10, 238.60),    // Minimum Charge for first 10 m³
         TierRate(11, 20, 26.20),    // Per m³ rate for 11-20
@@ -68,6 +76,18 @@ object WaterRates {
             WaterRateType.SEMI_COMMERCIAL_B -> SEMI_COMMERCIAL_B_RATES
             WaterRateType.SEMI_COMMERCIAL_C -> SEMI_COMMERCIAL_C_RATES
             WaterRateType.CUSTOM -> emptyList() // Will be loaded from preferences
+        }
+    }
+    
+    fun getESFForType(type: WaterRateType): Double {
+        return when (type) {
+            WaterRateType.RESIDENTIAL -> RESIDENTIAL_ESF
+            WaterRateType.COMMERCIAL -> COMMERCIAL_ESF
+            WaterRateType.GOVERNMENT -> GOVERNMENT_ESF
+            WaterRateType.SEMI_COMMERCIAL_A -> SEMI_COMMERCIAL_A_ESF
+            WaterRateType.SEMI_COMMERCIAL_B -> SEMI_COMMERCIAL_B_ESF
+            WaterRateType.SEMI_COMMERCIAL_C -> SEMI_COMMERCIAL_C_ESF
+            WaterRateType.CUSTOM -> 3.50 // Default for custom
         }
     }
 }

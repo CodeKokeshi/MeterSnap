@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.RadioButton
@@ -76,26 +77,51 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun loadSavedSettings() {
-        // Load ESF rate
-        val esfRate = ratePreferences.getESFRate()
-        editESFRate.setText(String.format(Locale.US, "%.2f", esfRate))
-
         // Load rate type
         val savedType = ratePreferences.getRateType()
         when (savedType) {
-            WaterRateType.RESIDENTIAL -> radioResidential.isChecked = true
-            WaterRateType.COMMERCIAL -> radioCommercial.isChecked = true
-            WaterRateType.GOVERNMENT -> radioGovernment.isChecked = true
-            WaterRateType.SEMI_COMMERCIAL_A -> radioSemiCommercialA.isChecked = true
-            WaterRateType.SEMI_COMMERCIAL_B -> radioSemiCommercialB.isChecked = true
-            WaterRateType.SEMI_COMMERCIAL_C -> radioSemiCommercialC.isChecked = true
+            WaterRateType.RESIDENTIAL -> {
+                radioResidential.isChecked = true
+                editESFRate.isEnabled = false
+                editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.RESIDENTIAL_ESF))
+            }
+            WaterRateType.COMMERCIAL -> {
+                radioCommercial.isChecked = true
+                editESFRate.isEnabled = false
+                editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.COMMERCIAL_ESF))
+            }
+            WaterRateType.GOVERNMENT -> {
+                radioGovernment.isChecked = true
+                editESFRate.isEnabled = false
+                editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.GOVERNMENT_ESF))
+            }
+            WaterRateType.SEMI_COMMERCIAL_A -> {
+                radioSemiCommercialA.isChecked = true
+                editESFRate.isEnabled = false
+                editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.SEMI_COMMERCIAL_A_ESF))
+            }
+            WaterRateType.SEMI_COMMERCIAL_B -> {
+                radioSemiCommercialB.isChecked = true
+                editESFRate.isEnabled = false
+                editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.SEMI_COMMERCIAL_B_ESF))
+            }
+            WaterRateType.SEMI_COMMERCIAL_C -> {
+                radioSemiCommercialC.isChecked = true
+                editESFRate.isEnabled = false
+                editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.SEMI_COMMERCIAL_C_ESF))
+            }
             WaterRateType.CUSTOM -> {
                 radioCustom.isChecked = true
+                editESFRate.isEnabled = true
+                btnEditCustomRates.visibility = View.VISIBLE
                 customRates = ratePreferences.getCustomRates().toMutableList()
                 if (customRates.isEmpty()) {
                     // Initialize with default residential rates
                     customRates = WaterRates.RESIDENTIAL_RATES.toMutableList()
                 }
+                // Load saved custom ESF rate
+                val customESF = ratePreferences.getESFRate()
+                editESFRate.setText(String.format(Locale.US, "%.2f", customESF))
             }
         }
 
@@ -107,40 +133,58 @@ class SettingsActivity : AppCompatActivity() {
             when (checkedId) {
                 R.id.radio_residential -> {
                     btnEditCustomRates.visibility = View.GONE
+                    editESFRate.isEnabled = false
                     textRatesSubtitle.text = "Residential/Government Rates - Jan 2025"
+                    editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.RESIDENTIAL_ESF))
                     updateRateTiersDisplay()
                 }
                 R.id.radio_commercial -> {
                     btnEditCustomRates.visibility = View.GONE
+                    editESFRate.isEnabled = false
                     textRatesSubtitle.text = "Commercial/Industrial Rates - Jan 2025"
+                    editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.COMMERCIAL_ESF))
                     updateRateTiersDisplay()
                 }
                 R.id.radio_government -> {
                     btnEditCustomRates.visibility = View.GONE
+                    editESFRate.isEnabled = false
                     textRatesSubtitle.text = "Residential/Government Rates - Jan 2025"
+                    editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.GOVERNMENT_ESF))
                     updateRateTiersDisplay()
                 }
                 R.id.radio_semi_commercial_a -> {
                     btnEditCustomRates.visibility = View.GONE
+                    editESFRate.isEnabled = false
                     textRatesSubtitle.text = "Semi-Commercial A Rates - Jan 2025"
+                    editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.SEMI_COMMERCIAL_A_ESF))
                     updateRateTiersDisplay()
                 }
                 R.id.radio_semi_commercial_b -> {
                     btnEditCustomRates.visibility = View.GONE
+                    editESFRate.isEnabled = false
                     textRatesSubtitle.text = "Semi-Commercial B Rates - Jan 2025"
+                    editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.SEMI_COMMERCIAL_B_ESF))
                     updateRateTiersDisplay()
                 }
                 R.id.radio_semi_commercial_c -> {
                     btnEditCustomRates.visibility = View.GONE
+                    editESFRate.isEnabled = false
                     textRatesSubtitle.text = "Semi-Commercial C Rates - Jan 2025"
+                    editESFRate.setText(String.format(Locale.US, "%.2f", WaterRates.SEMI_COMMERCIAL_C_ESF))
                     updateRateTiersDisplay()
                 }
                 R.id.radio_custom -> {
                     btnEditCustomRates.visibility = View.VISIBLE
+                    editESFRate.isEnabled = true
                     textRatesSubtitle.text = "Your custom settings (editable)"
+                    // Load saved custom rates and ESF
+                    customRates = ratePreferences.getCustomRates().toMutableList()
                     if (customRates.isEmpty()) {
                         customRates = WaterRates.RESIDENTIAL_RATES.toMutableList()
                     }
+                    // Load saved custom ESF rate
+                    val customESF = ratePreferences.getESFRate()
+                    editESFRate.setText(String.format(Locale.US, "%.2f", customESF))
                     updateRateTiersDisplay()
                 }
             }
@@ -223,6 +267,9 @@ class SettingsActivity : AppCompatActivity() {
             .setView(dialogView)
             .create()
 
+        // Enable keyboard to resize dialog content instead of covering it
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
         dialogView.findViewById<Button>(R.id.btn_cancel).setOnClickListener {
             dialog.dismiss()
         }
@@ -263,15 +310,6 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun saveSettings() {
         try {
-            // Save ESF rate
-            val esfRateText = editESFRate.text.toString()
-            val esfRate = esfRateText.toDoubleOrNull()
-            if (esfRate == null || esfRate < 0) {
-                Toast.makeText(this, "Please enter a valid ESF rate", Toast.LENGTH_SHORT).show()
-                return
-            }
-            ratePreferences.saveESFRate(esfRate)
-
             // Save rate type
             val rateType = when {
                 radioResidential.isChecked -> WaterRateType.RESIDENTIAL
@@ -285,9 +323,20 @@ class SettingsActivity : AppCompatActivity() {
             }
             ratePreferences.saveRateType(rateType)
 
-            // Save custom rates if selected
-            if (rateType == WaterRateType.CUSTOM && customRates.isNotEmpty()) {
-                ratePreferences.saveCustomRates(customRates)
+            // Only save ESF rate for custom settings
+            if (rateType == WaterRateType.CUSTOM) {
+                val esfRateText = editESFRate.text.toString()
+                val esfRate = esfRateText.toDoubleOrNull()
+                if (esfRate == null || esfRate < 0) {
+                    Toast.makeText(this, "Please enter a valid ESF rate", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                ratePreferences.saveESFRate(esfRate)
+                
+                // Save custom rates
+                if (customRates.isNotEmpty()) {
+                    ratePreferences.saveCustomRates(customRates)
+                }
             }
 
             Toast.makeText(this, "Settings saved successfully", Toast.LENGTH_SHORT).show()
