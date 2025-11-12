@@ -28,6 +28,17 @@
             android:exported="false"
             android:parentActivityName=".MainActivity"
             android:theme="@style/Theme.MeterSnap" />
+        <activity
+            android:name=".ManualInputActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity"
+            android:theme="@style/Theme.MeterSnap"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".BillResultActivity"
+            android:exported="false"
+            android:parentActivityName=".ManualInputActivity"
+            android:theme="@style/Theme.MeterSnap" />
     </application>
 
 </manifest>

@@ -24,6 +24,7 @@ import java.util.concurrent.Executors
 class MainActivity : AppCompatActivity() {
     private lateinit var cameraContainer: FrameLayout
     private lateinit var btnSnap: Button
+    private lateinit var btnManualInput: Button
     private lateinit var btnSettings: ImageButton
 
     private var cameraExecutor: ExecutorService? = null
@@ -47,6 +48,7 @@ class MainActivity : AppCompatActivity() {
 
         cameraContainer = findViewById(R.id.camera_container)
         btnSnap = findViewById(R.id.btn_snap)
+        btnManualInput = findViewById(R.id.btn_manual_input)
         btnSettings = findViewById(R.id.btn_settings)
 
         cameraExecutor = Executors.newSingleThreadExecutor()
@@ -60,6 +62,12 @@ class MainActivity : AppCompatActivity() {
         btnSnap.setOnClickListener {
             // Handle snap action
             Toast.makeText(this, "Snap button clicked", Toast.LENGTH_SHORT).show()
+        }
+
+        btnManualInput.setOnClickListener {
+            // Navigate to manual input screen
+            val intent = android.content.Intent(this, ManualInputActivity::class.java)
+            startActivity(intent)
         }
 
         btnSettings.setOnClickListener {

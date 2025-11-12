@@ -66,4 +66,19 @@
         app:strokeColor="#CCCCCC"
         app:strokeWidth="4dp" />
 
+    <Button
+        android:id="@+id/btn_manual_input"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="48dp"
+        android:layout_marginStart="24dp"
+        android:backgroundTint="#2196F3"
+        android:padding="12dp"
+        android:text="📝 Manual\nInput"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        app:cornerRadius="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>
