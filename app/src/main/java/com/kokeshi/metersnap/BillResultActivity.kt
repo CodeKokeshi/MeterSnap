@@ -46,6 +46,18 @@ class BillResultActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
         supportActionBar?.title = "Bill Calculation"
+        
+        // Apply status bar insets to toolbar using modern WindowInsets API
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
+            val statusBarInsets = windowInsets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            view.setPadding(
+                view.paddingLeft, 
+                statusBarInsets.top, 
+                view.paddingRight, 
+                view.paddingBottom
+            )
+            windowInsets
+        }
     }
 
     private fun setupListeners() {
@@ -63,13 +75,17 @@ class BillResultActivity : AppCompatActivity() {
         val esfFee = intent.getDoubleExtra("ESF_FEE", 0.0)
         val totalBill = intent.getDoubleExtra("TOTAL_BILL", 0.0)
 
-        // Display usage
-        textUsage.text = "$usage cu.m.\n($previousReading → $currentReading)"
+        // Display usage with proper formatting
+        textUsage.text = "$usage usage"
         
-        // Display rate type
+        // Display readings
+        textRateType.text = "Previous: $previousReading → Current: $currentReading"
+        
+        // Display rate type name
+        val textRateTypeName = findViewById<TextView>(R.id.text_rate_type_name)
         val rateTypeFormatted = rateType.replace("_", " ").lowercase()
             .split(" ").joinToString(" ") { it.capitalize() }
-        textRateType.text = rateTypeFormatted
+        textRateTypeName.text = rateTypeFormatted
 
         // Display tier breakdown
         displayTierBreakdown()
@@ -86,27 +102,33 @@ class BillResultActivity : AppCompatActivity() {
         val tierData = listOf(
             Triple(intent.getIntExtra("TIER_1_USAGE", 0), 
                    intent.getDoubleExtra("TIER_1_AMOUNT", 0.0), 
-                   "1-10 cu.m. (Minimum Charge)"),
+                   "1-10 usage (Minimum Charge)"),
             Triple(intent.getIntExtra("TIER_2_USAGE", 0), 
                    intent.getDoubleExtra("TIER_2_AMOUNT", 0.0), 
-                   "11-20 cu.m."),
+                   "11-20 usage"),
             Triple(intent.getIntExtra("TIER_3_USAGE", 0), 
                    intent.getDoubleExtra("TIER_3_AMOUNT", 0.0), 
-                   "21-30 cu.m."),
+                   "21-30 usage"),
             Triple(intent.getIntExtra("TIER_4_USAGE", 0), 
                    intent.getDoubleExtra("TIER_4_AMOUNT", 0.0), 
-                   "31-40 cu.m."),
+                   "31-40 usage"),
             Triple(intent.getIntExtra("TIER_5_USAGE", 0), 
                    intent.getDoubleExtra("TIER_5_AMOUNT", 0.0), 
-                   "41+ cu.m.")
+                   "41+ usage")
         )
 
+        android.util.Log.d("BillResult", "Tier breakdown data: $tierData")
+        
         for ((usage, amount, label) in tierData) {
+            android.util.Log.d("BillResult", "Processing tier: $label, usage: $usage, amount: $amount")
             if (usage > 0) {
                 val tierView = createTierView(label, usage, amount)
                 containerTierBreakdown.addView(tierView)
+                android.util.Log.d("BillResult", "Added tier view for $label")
             }
         }
+        
+        android.util.Log.d("BillResult", "Total tier views: ${containerTierBreakdown.childCount}")
     }
 
     private fun createTierView(label: String, usage: Int, amount: Double): CardView {
@@ -136,9 +158,11 @@ class BillResultActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 1f
             )
-            text = "$label\n$usage cu.m."
+            text = "$label\n$usage usage"
             textSize = 14f
-            setTextColor(resources.getColor(android.R.color.black, theme))
+            val typedValue = android.util.TypedValue()
+            theme.resolveAttribute(android.R.attr.textColorPrimary, typedValue, true)
+            setTextColor(typedValue.data)
         }
 
         val textAmount = TextView(this).apply {
@@ -148,7 +172,9 @@ class BillResultActivity : AppCompatActivity() {
             )
             text = String.format(Locale.US, "₱%.2f", amount)
             textSize = 16f
-            setTextColor(resources.getColor(android.R.color.black, theme))
+            val typedValue = android.util.TypedValue()
+            theme.resolveAttribute(android.R.attr.textColorPrimary, typedValue, true)
+            setTextColor(typedValue.data)
         }
 
         linearLayout.addView(textLabel)

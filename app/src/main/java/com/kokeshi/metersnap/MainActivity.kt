@@ -24,7 +24,7 @@ import java.util.concurrent.Executors
 class MainActivity : AppCompatActivity() {
     private lateinit var cameraContainer: FrameLayout
     private lateinit var btnSnap: Button
-    private lateinit var btnManualInput: Button
+    private lateinit var btnManualInput: ImageButton
     private lateinit var btnSettings: ImageButton
 
     private var cameraExecutor: ExecutorService? = null

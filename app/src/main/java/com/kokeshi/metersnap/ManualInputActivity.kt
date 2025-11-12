@@ -43,6 +43,18 @@ class ManualInputActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
         supportActionBar?.title = "Manual Input"
+        
+        // Apply status bar insets to toolbar using modern WindowInsets API
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
+            val statusBarInsets = windowInsets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            view.setPadding(
+                view.paddingLeft, 
+                statusBarInsets.top, 
+                view.paddingRight, 
+                view.paddingBottom
+            )
+            windowInsets
+        }
     }
 
     private fun setupListeners() {

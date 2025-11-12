@@ -16,17 +16,18 @@
 
     <ImageButton
         android:id="@+id/btn_settings"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_marginTop="16dp"
-        android:layout_marginEnd="16dp"
-        android:background="?attr/selectableItemBackgroundBorderless"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_marginBottom="56dp"
+        android:layout_marginStart="24dp"
+        android:background="@drawable/rounded_button_background"
         android:contentDescription="Settings"
-        android:scaleType="centerInside"
+        android:padding="16dp"
+        android:scaleType="fitCenter"
         android:src="@drawable/ic_settings"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:tint="#FFFFFF" />
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:tint="#000000" />
 
     <View
         android:id="@+id/guide_box"
@@ -66,19 +67,19 @@
         app:strokeColor="#CCCCCC"
         app:strokeWidth="4dp" />
 
-    <Button
+    <ImageButton
         android:id="@+id/btn_manual_input"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="48dp"
-        android:layout_marginStart="24dp"
-        android:backgroundTint="#2196F3"
-        android:padding="12dp"
-        android:text="📝 Manual\nInput"
-        android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        app:cornerRadius="8dp"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_marginBottom="56dp"
+        android:layout_marginEnd="24dp"
+        android:background="@drawable/rounded_button_background"
+        android:contentDescription="Manual Input"
+        android:padding="16dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_manual_input"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent"
+        app:tint="#000000" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

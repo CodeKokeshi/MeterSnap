@@ -19,10 +19,14 @@
             android:minHeight="?attr/actionBarSize"
             android:background="?attr/colorPrimary"
             android:elevation="4dp"
+            android:fitsSystemWindows="true"
+            android:paddingBottom="8dp"
             android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
+            app:contentInsetStartWithNavigation="0dp"
             app:navigationIcon="?attr/homeAsUpIndicator"
             app:title="Manual Input"
-            app:titleTextColor="@android:color/white" />
+            app:titleTextColor="@android:color/white"
+            app:titleMarginStart="8dp" />
 
         <!-- Content -->
         <LinearLayout
@@ -37,7 +41,8 @@
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="24dp"
                 app:cardCornerRadius="8dp"
-                app:cardElevation="2dp">
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="?android:attr/colorBackground">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -48,7 +53,7 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="💡 Enter Your Meter Readings"
+                        android:text="Enter Your Meter Readings"
                         android:textColor="?android:attr/textColorPrimary"
                         android:textSize="18sp"
                         android:textStyle="bold"
@@ -89,7 +94,7 @@
                             android:id="@+id/edit_current_reading"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:hint="Current Reading (cu.m.)"
+                            android:hint="Current Reading"
                             android:inputType="number"
                             android:textSize="18sp" />
                     </com.google.android.material.textfield.TextInputLayout>
@@ -105,7 +110,7 @@
                             android:id="@+id/edit_previous_reading"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:hint="Previous Reading (cu.m.)"
+                            android:hint="Previous Reading"
                             android:inputType="number"
                             android:textSize="18sp" />
                     </com.google.android.material.textfield.TextInputLayout>
@@ -127,9 +132,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
+                android:layout_marginBottom="80dp"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="2dp"
-                app:cardBackgroundColor="#FFF3E0">
+                app:cardBackgroundColor="?android:attr/colorBackground">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -140,8 +146,8 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="📋 Example"
-                        android:textColor="#E65100"
+                        android:text="Example"
+                        android:textColor="?android:attr/textColorPrimary"
                         android:textSize="16sp"
                         android:textStyle="bold"
                         android:layout_marginBottom="8dp" />
@@ -149,8 +155,8 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Current Reading: 1575\nPrevious Reading: 1546\nUsage: 29 cu.m."
-                        android:textColor="#E65100"
+                        android:text="Current Reading: 1575\nPrevious Reading: 1546\nUsage: 29"
+                        android:textColor="?android:attr/textColorSecondary"
                         android:textSize="14sp" />
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
