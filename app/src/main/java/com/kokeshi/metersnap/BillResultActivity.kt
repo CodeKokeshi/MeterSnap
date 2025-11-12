@@ -142,10 +142,6 @@ class BillResultActivity : AppCompatActivity() {
             radius = 8f
             cardElevation = 2f
             setContentPadding(16, 12, 16, 12)
-            // Set background color for visibility
-            val typedValue = android.util.TypedValue()
-            context.theme.resolveAttribute(android.R.attr.colorBackground, typedValue, true)
-            setCardBackgroundColor(typedValue.data)
         }
 
         val linearLayout = LinearLayout(this).apply {
