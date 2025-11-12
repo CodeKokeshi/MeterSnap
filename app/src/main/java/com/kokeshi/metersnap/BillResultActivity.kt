@@ -1,5 +1,6 @@
 package com.kokeshi.metersnap
 
+import android.content.res.Configuration
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
@@ -7,6 +8,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.cardview.widget.CardView
+import androidx.core.content.ContextCompat
 import java.util.Locale
 
 class BillResultActivity : AppCompatActivity() {
@@ -132,16 +134,21 @@ class BillResultActivity : AppCompatActivity() {
     }
 
     private fun createTierView(label: String, usage: Int, amount: Double): CardView {
+        // Get proper colors based on current theme
+        val isDarkMode = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val cardBgColor = if (isDarkMode) 0xFF2C2C2E.toInt() else android.graphics.Color.WHITE
+        val textColor = if (isDarkMode) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+        
         val cardView = CardView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                setMargins(0, 0, 0, 12)
+                bottomMargin = 16
             }
             radius = 8f
-            cardElevation = 2f
-            setContentPadding(16, 12, 16, 12)
+            cardElevation = 4f
+            setCardBackgroundColor(cardBgColor)
         }
 
         val linearLayout = LinearLayout(this).apply {
@@ -150,6 +157,7 @@ class BillResultActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
             orientation = LinearLayout.HORIZONTAL
+            setPadding(32, 24, 32, 24)
         }
 
         val textLabel = TextView(this).apply {
@@ -159,10 +167,8 @@ class BillResultActivity : AppCompatActivity() {
                 1f
             )
             text = "$label\n$usage usage"
-            textSize = 14f
-            val typedValue = android.util.TypedValue()
-            theme.resolveAttribute(android.R.attr.textColorPrimary, typedValue, true)
-            setTextColor(typedValue.data)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(textColor)
         }
 
         val textAmount = TextView(this).apply {
@@ -171,10 +177,9 @@ class BillResultActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
             text = String.format(Locale.US, "₱%.2f", amount)
-            textSize = 16f
-            val typedValue = android.util.TypedValue()
-            theme.resolveAttribute(android.R.attr.textColorPrimary, typedValue, true)
-            setTextColor(typedValue.data)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(textColor)
+            android.graphics.Typeface.DEFAULT_BOLD.let { typeface = it }
         }
 
         linearLayout.addView(textLabel)
