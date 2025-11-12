@@ -15,4 +15,10 @@
     <string name="commercial_rates_jan_2025">Commercial rates - January 2025</string>
     <string name="government_rates_jan_2025">Government rates - January 2025</string>
     <string name="custom_rates_editable">Custom rates (editable)</string>
+    <string name="residential_government_rates_jan_2025">Residential/Government Rates - Jan 2025</string>
+    <string name="commercial_industrial_rates_jan_2025">Commercial/Industrial Rates - Jan 2025</string>
+    <string name="semi_commercial_a_rates_jan_2025">Semi-Commercial A Rates - Jan 2025</string>
+    <string name="semi_commercial_b_rates_jan_2025">Semi-Commercial B Rates - Jan 2025</string>
+    <string name="semi_commercial_c_rates_jan_2025">Semi-Commercial C Rates - Jan 2025</string>
+    <string name="custom_settings_editable">Your custom settings (editable)</string>
 </resources>

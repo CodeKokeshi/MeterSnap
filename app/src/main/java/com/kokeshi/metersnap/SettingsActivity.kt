@@ -5,7 +5,6 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
-import android.view.WindowManager
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -15,6 +14,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.textfield.TextInputEditText
 import java.util.Locale
 import com.kokeshi.metersnap.data.TierRate
@@ -51,15 +53,35 @@ class SettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
         
-        // Enable keyboard to resize window instead of covering content
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        // Enable edge-to-edge layout and handle window insets (modern approach)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
         ratePreferences = RatePreferences(this)
 
         initializeViews()
         setupToolbar()
+        setupWindowInsets()
         loadSavedSettings()
         setupListeners()
+    }
+
+    private fun setupWindowInsets() {
+        // Handle keyboard and system bar insets for the root view
+        val rootView = findViewById<View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
+            val imeInsets = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+            val systemBarsInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+
+            // Apply padding to avoid keyboard covering content
+            view.setPadding(
+                systemBarsInsets.left,
+                0, // Top padding handled by toolbar
+                systemBarsInsets.right,
+                imeInsets.bottom.coerceAtLeast(systemBarsInsets.bottom)
+            )
+
+            windowInsets
+        }
     }
 
     private fun initializeViews() {
@@ -83,17 +105,18 @@ class SettingsActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
         
-        // Add padding to toolbar for status bar
-        toolbar.setPadding(0, getStatusBarHeight(), 0, 0)
-    }
-    
-    private fun getStatusBarHeight(): Int {
-        var result = 0
-        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
-        if (resourceId > 0) {
-            result = resources.getDimensionPixelSize(resourceId)
+        // Apply status bar insets to toolbar using modern WindowInsets API
+        ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
+            val statusBarInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            // Add extra padding for better spacing
+            view.setPadding(
+                view.paddingLeft, 
+                statusBarInsets.top, 
+                view.paddingRight, 
+                view.paddingBottom
+            )
+            windowInsets
         }
-        return result
     }
 
     private fun loadSavedSettings() {
@@ -167,7 +190,7 @@ class SettingsActivity : AppCompatActivity() {
                     0 -> { // Residential
                         btnEditCustomRates.visibility = View.GONE
                         btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = "Residential/Government Rates - Jan 2025"
+                        textRatesSubtitle.text = getString(R.string.residential_government_rates_jan_2025)
                         currentESFRate = WaterRates.RESIDENTIAL_ESF
                         textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
                         updateRateTiersDisplay()
@@ -175,7 +198,7 @@ class SettingsActivity : AppCompatActivity() {
                     1 -> { // Commercial
                         btnEditCustomRates.visibility = View.GONE
                         btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = "Commercial/Industrial Rates - Jan 2025"
+                        textRatesSubtitle.text = getString(R.string.commercial_industrial_rates_jan_2025)
                         currentESFRate = WaterRates.COMMERCIAL_ESF
                         textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
                         updateRateTiersDisplay()
@@ -183,7 +206,7 @@ class SettingsActivity : AppCompatActivity() {
                     2 -> { // Government
                         btnEditCustomRates.visibility = View.GONE
                         btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = "Residential/Government Rates - Jan 2025"
+                        textRatesSubtitle.text = getString(R.string.residential_government_rates_jan_2025)
                         currentESFRate = WaterRates.GOVERNMENT_ESF
                         textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
                         updateRateTiersDisplay()
@@ -191,7 +214,7 @@ class SettingsActivity : AppCompatActivity() {
                     3 -> { // Semi-Commercial A
                         btnEditCustomRates.visibility = View.GONE
                         btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = "Semi-Commercial A Rates - Jan 2025"
+                        textRatesSubtitle.text = getString(R.string.semi_commercial_a_rates_jan_2025)
                         currentESFRate = WaterRates.SEMI_COMMERCIAL_A_ESF
                         textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
                         updateRateTiersDisplay()
@@ -199,7 +222,7 @@ class SettingsActivity : AppCompatActivity() {
                     4 -> { // Semi-Commercial B
                         btnEditCustomRates.visibility = View.GONE
                         btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = "Semi-Commercial B Rates - Jan 2025"
+                        textRatesSubtitle.text = getString(R.string.semi_commercial_b_rates_jan_2025)
                         currentESFRate = WaterRates.SEMI_COMMERCIAL_B_ESF
                         textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
                         updateRateTiersDisplay()
@@ -207,7 +230,7 @@ class SettingsActivity : AppCompatActivity() {
                     5 -> { // Semi-Commercial C
                         btnEditCustomRates.visibility = View.GONE
                         btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = "Semi-Commercial C Rates - Jan 2025"
+                        textRatesSubtitle.text = getString(R.string.semi_commercial_c_rates_jan_2025)
                         currentESFRate = WaterRates.SEMI_COMMERCIAL_C_ESF
                         textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
                         updateRateTiersDisplay()
@@ -215,7 +238,7 @@ class SettingsActivity : AppCompatActivity() {
                     6 -> { // Custom
                         btnEditCustomRates.visibility = View.VISIBLE
                         btnEditESF.visibility = View.VISIBLE
-                        textRatesSubtitle.text = "Your custom settings (editable)"
+                        textRatesSubtitle.text = getString(R.string.custom_settings_editable)
                         // Load saved custom rates and ESF
                         customRates = ratePreferences.getCustomRates().toMutableList()
                         if (customRates.isEmpty()) {
@@ -315,8 +338,15 @@ class SettingsActivity : AppCompatActivity() {
             .setView(dialogView)
             .create()
 
-        // Enable keyboard to resize dialog content instead of covering it
-        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        // Enable keyboard to resize dialog content instead of covering it (modern approach)
+        dialog.window?.let { window ->
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            ViewCompat.setOnApplyWindowInsetsListener(dialogView) { view, windowInsets ->
+                val imeInsets = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+                view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, imeInsets.bottom)
+                windowInsets
+            }
+        }
 
         dialogView.findViewById<Button>(R.id.btn_cancel).setOnClickListener {
             dialog.dismiss()
@@ -368,8 +398,15 @@ class SettingsActivity : AppCompatActivity() {
             .setView(dialogView)
             .create()
 
-        // Enable keyboard to resize dialog content instead of covering it
-        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        // Enable keyboard to resize dialog content instead of covering it (modern approach)
+        dialog.window?.let { window ->
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            ViewCompat.setOnApplyWindowInsetsListener(dialogView) { view, windowInsets ->
+                val imeInsets = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+                view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, imeInsets.bottom)
+                windowInsets
+            }
+        }
 
         dialogView.findViewById<Button>(R.id.btn_cancel_esf).setOnClickListener {
             dialog.dismiss()

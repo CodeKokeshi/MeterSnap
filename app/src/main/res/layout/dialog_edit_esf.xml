@@ -49,7 +49,7 @@
         android:gravity="end">
 
         <Button
-            android:id="@+id/btn_cancel"
+            android:id="@+id/btn_cancel_esf"
             style="@style/Widget.Material3.Button.TextButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -57,7 +57,7 @@
             android:textSize="16sp" />
 
         <Button
-            android:id="@+id/btn_save"
+            android:id="@+id/btn_save_esf"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
