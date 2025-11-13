@@ -198,19 +198,19 @@ class BillResultActivity : AppCompatActivity() {
             paint.typeface = Typeface.DEFAULT_BOLD
             paint.textAlign = Paint.Align.CENTER
             canvas.drawText("Total Water Usage", width / 2f, cardY, paint)
-            cardY += 60f
+            cardY += 70f
 
             paint.textSize = 32f
             paint.typeface = Typeface.DEFAULT
             paint.color = if (isDarkMode) Color.LTGRAY else Color.DKGRAY
             canvas.drawText("Previous: $previousReading → Current: $currentReading", width / 2f, cardY, paint)
-            cardY += 60f
+            cardY += 80f
 
             paint.textSize = 64f
             paint.typeface = Typeface.DEFAULT_BOLD
             paint.color = textColor
             canvas.drawText("$usage usage", width / 2f, cardY, paint)
-            cardY += 60f
+            cardY += 80f
 
             paint.textSize = 32f
             paint.typeface = Typeface.DEFAULT
@@ -254,7 +254,8 @@ class BillResultActivity : AppCompatActivity() {
             paint.textSize = 32f
             paint.typeface = Typeface.DEFAULT
             for ((tierUsage, tierAmount, tierLabel) in tierData) {
-                canvas.drawText(tierLabel, 80f, cardY, paint)
+                val tierText = "$tierLabel ($tierUsage usage used)"
+                canvas.drawText(tierText, 80f, cardY, paint)
                 paint.textAlign = Paint.Align.RIGHT
                 canvas.drawText(String.format(Locale.US, "₱%.2f", tierAmount), width - 80f, cardY, paint)
                 paint.textAlign = Paint.Align.LEFT
@@ -298,17 +299,18 @@ class BillResultActivity : AppCompatActivity() {
         // Total Due Card (Emphasized)
         val totalCardColor = if (isDarkMode) Color.parseColor("#2E7D32") else Color.parseColor("#4CAF50")
         drawCard(canvas, paint, 40f, yPos, width - 80f, totalCardColor, Color.WHITE) {
-            val cardY = it
+            var cardY = it
             paint.textSize = 52f
             paint.typeface = Typeface.DEFAULT_BOLD
             paint.color = Color.WHITE
             canvas.drawText("TOTAL DUE", 80f, cardY, paint)
+            cardY += 80f
 
             paint.textSize = 72f
             paint.textAlign = Paint.Align.RIGHT
             canvas.drawText(String.format(Locale.US, "₱%.2f", totalBill), width - 80f, cardY, paint)
             paint.textAlign = Paint.Align.LEFT
-            cardY + 40f
+            cardY + 50f
         }
 
         // Timestamp at bottom
