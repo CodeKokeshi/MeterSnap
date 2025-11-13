@@ -15,57 +15,81 @@
         android:background="@android:color/black" />
 
     <ImageButton
+        android:id="@+id/btn_torch"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginBottom="16dp"
+        android:background="@android:color/transparent"
+        android:contentDescription="Torch"
+        android:padding="10dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_flashlight_off"
+        app:layout_constraintBottom_toTopOf="@+id/btn_snap"
+        app:layout_constraintEnd_toEndOf="@+id/btn_snap"
+        app:layout_constraintStart_toStartOf="@+id/btn_snap" />
+
+    <ImageButton
         android:id="@+id/btn_settings"
         android:layout_width="64dp"
         android:layout_height="64dp"
         android:layout_marginBottom="56dp"
         android:layout_marginStart="24dp"
-        android:background="@drawable/rounded_button_background"
+        android:background="@android:color/transparent"
         android:contentDescription="Settings"
         android:padding="16dp"
         android:scaleType="fitCenter"
         android:src="@drawable/ic_settings"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:tint="#000000" />
+        app:layout_constraintStart_toStartOf="parent" />
 
     <View
         android:id="@+id/guide_box"
         android:layout_width="300dp"
         android:layout_height="150dp"
-        android:background="@drawable/guide_box_border"
+        android:background="@drawable/guide_box_border_enhanced"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintVertical_bias="0.4" />
 
+    <View
+        android:id="@+id/scan_line"
+        android:layout_width="300dp"
+        android:layout_height="4dp"
+        android:background="@drawable/scan_line"
+        app:layout_constraintBottom_toBottomOf="@+id/guide_box"
+        app:layout_constraintEnd_toEndOf="@+id/guide_box"
+        app:layout_constraintStart_toStartOf="@+id/guide_box"
+        app:layout_constraintTop_toTopOf="@+id/guide_box" />
+
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginBottom="16dp"
-        android:text="Align digits inside the box"
+        android:text="Point camera at your water meter\nMake sure the numbers are readable"
         android:textColor="#FFFFFF"
         android:textSize="16sp"
+        android:gravity="center"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
         app:layout_constraintBottom_toTopOf="@+id/guide_box"
         app:layout_constraintEnd_toEndOf="@+id/guide_box"
         app:layout_constraintStart_toStartOf="@+id/guide_box" />
 
-    <Button
+    <ImageButton
         android:id="@+id/btn_snap"
         android:layout_width="80dp"
         android:layout_height="80dp"
         android:layout_marginBottom="48dp"
-        android:backgroundTint="#FFFFFF"
-        android:insetTop="0dp"
-        android:insetBottom="0dp"
-        android:text=""
-        app:cornerRadius="40dp"
+        android:background="@android:color/transparent"
+        android:contentDescription="Capture"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_snap"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:strokeColor="#CCCCCC"
-        app:strokeWidth="4dp" />
+        app:layout_constraintStart_toStartOf="parent" />
 
     <ImageButton
         android:id="@+id/btn_manual_input"
@@ -73,13 +97,12 @@
         android:layout_height="64dp"
         android:layout_marginBottom="56dp"
         android:layout_marginEnd="24dp"
-        android:background="@drawable/rounded_button_background"
+        android:background="@android:color/transparent"
         android:contentDescription="Manual Input"
         android:padding="16dp"
         android:scaleType="fitCenter"
-        android:src="@drawable/ic_manual_input"
+        android:src="@drawable/ic_configuration"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:tint="#000000" />
+        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

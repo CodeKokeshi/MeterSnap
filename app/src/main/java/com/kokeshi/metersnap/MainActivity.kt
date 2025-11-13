@@ -3,7 +3,6 @@ package com.kokeshi.metersnap
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.Toast
@@ -23,13 +22,16 @@ import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
     private lateinit var cameraContainer: FrameLayout
-    private lateinit var btnSnap: Button
+    private lateinit var btnSnap: ImageButton
     private lateinit var btnManualInput: ImageButton
     private lateinit var btnSettings: ImageButton
+    private lateinit var btnTorch: ImageButton
+    private lateinit var scanLine: android.view.View
 
     private var cameraExecutor: ExecutorService? = null
     private var camera: Camera? = null
     private var preview: Preview? = null
+    private var isTorchOn = false
 
     companion object {
         private const val CAMERA_PERMISSION_CODE = 100
@@ -50,8 +52,13 @@ class MainActivity : AppCompatActivity() {
         btnSnap = findViewById(R.id.btn_snap)
         btnManualInput = findViewById(R.id.btn_manual_input)
         btnSettings = findViewById(R.id.btn_settings)
+        btnTorch = findViewById(R.id.btn_torch)
+        scanLine = findViewById(R.id.scan_line)
 
         cameraExecutor = Executors.newSingleThreadExecutor()
+
+        // Start scanning animation
+        startScanAnimation()
 
         if (checkCameraPermission()) {
             startCamera()
@@ -59,9 +66,14 @@ class MainActivity : AppCompatActivity() {
             requestCameraPermission()
         }
 
+        // Add press animations to buttons
+        addSpinAnimation(btnSnap)
+        addScaleAnimation(btnManualInput)
+        addSpinAnimation(btnSettings)
+        addScaleAnimation(btnTorch)
+
         btnSnap.setOnClickListener {
-            // Handle snap action
-            Toast.makeText(this, "Snap button clicked", Toast.LENGTH_SHORT).show()
+            // TODO: Implement photo capture and OCR processing
         }
 
         btnManualInput.setOnClickListener {
@@ -74,6 +86,10 @@ class MainActivity : AppCompatActivity() {
             // Navigate to settings screen
             val intent = android.content.Intent(this, SettingsActivity::class.java)
             startActivity(intent)
+        }
+
+        btnTorch.setOnClickListener {
+            toggleTorch()
         }
     }
 
@@ -141,6 +157,123 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Failed to start camera: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun addSpinAnimation(button: ImageButton) {
+        button.setOnTouchListener { view, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    // Spin 180 degrees AND scale down when pressed
+                    view.animate()
+                        .rotation(180f)
+                        .scaleX(0.7f)
+                        .scaleY(0.7f)
+                        .alpha(0.7f)
+                        .setDuration(200)
+                        .setInterpolator(android.view.animation.DecelerateInterpolator())
+                        .start()
+                }
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    // Reset rotation and scale when released
+                    view.animate()
+                        .rotation(0f)
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .alpha(1f)
+                        .setDuration(200)
+                        .setInterpolator(android.view.animation.OvershootInterpolator(2f))
+                        .start()
+                }
+            }
+            false // Return false to allow the click listener to also fire
+        }
+    }
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun addScaleAnimation(button: ImageButton) {
+        button.setOnTouchListener { view, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    // Scale down more dramatically when pressed
+                    view.animate()
+                        .scaleX(0.7f)
+                        .scaleY(0.7f)
+                        .alpha(0.7f)
+                        .setDuration(100)
+                        .setInterpolator(android.view.animation.DecelerateInterpolator())
+                        .start()
+                }
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    // Bounce back to normal with overshoot
+                    view.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .alpha(1f)
+                        .setDuration(200)
+                        .setInterpolator(android.view.animation.OvershootInterpolator(2f))
+                        .start()
+                }
+            }
+            false // Return false to allow the click listener to also fire
+        }
+    }
+
+    private fun startScanAnimation() {
+        // Get the guide box height to calculate scan range
+        val guideBox = findViewById<android.view.View>(R.id.guide_box)
+        guideBox.post {
+            val scanHeight = guideBox.height
+
+            // Animate the scan line from top to bottom continuously
+            scanLine.animate()
+                .translationY(-scanHeight / 2f)
+                .setDuration(0)
+                .withEndAction {
+                    animateScanLine(scanHeight)
+                }
+                .start()
+        }
+    }
+
+    private fun animateScanLine(scanHeight: Int) {
+        scanLine.animate()
+            .translationY(scanHeight / 2f)
+            .setDuration(2000)
+            .setInterpolator(android.view.animation.LinearInterpolator())
+            .withEndAction {
+                // Reset to top and repeat
+                scanLine.animate()
+                    .translationY(-scanHeight / 2f)
+                    .setDuration(0)
+                    .withEndAction {
+                        animateScanLine(scanHeight)
+                    }
+                    .start()
+            }
+            .start()
+    }
+
+
+    private fun toggleTorch() {
+        camera?.let { cam ->
+            if (cam.cameraInfo.hasFlashUnit()) {
+                isTorchOn = !isTorchOn
+                cam.cameraControl.enableTorch(isTorchOn)
+
+                // Update icon
+                if (isTorchOn) {
+                    btnTorch.setImageResource(R.drawable.ic_flashlight_on)
+                    Toast.makeText(this, "Torch may cause glare on glass cover", Toast.LENGTH_LONG).show()
+                } else {
+                    btnTorch.setImageResource(R.drawable.ic_flashlight_off)
+                }
+            } else {
+                Toast.makeText(this, "No flash available", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     override fun onDestroy() {

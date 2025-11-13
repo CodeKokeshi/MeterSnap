@@ -17,15 +17,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="?attr/actionBarSize"
-            android:background="?attr/colorPrimary"
+            android:background="?android:attr/colorBackground"
             android:elevation="4dp"
             android:fitsSystemWindows="true"
             android:paddingBottom="8dp"
-            android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
             app:contentInsetStartWithNavigation="0dp"
             app:navigationIcon="?attr/homeAsUpIndicator"
             app:title="Manual Input"
-            app:titleTextColor="@android:color/white"
+            app:titleTextColor="?android:attr/textColorPrimary"
             app:titleMarginStart="8dp" />
 
         <!-- Content -->
@@ -74,7 +73,8 @@
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="24dp"
                 app:cardCornerRadius="8dp"
-                app:cardElevation="2dp">
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="?android:attr/colorBackground">
 
                 <LinearLayout
                     android:layout_width="match_parent"

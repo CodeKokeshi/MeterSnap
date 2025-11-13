@@ -1,0 +1,252 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Aps>
+	<Group>
+		<Page Width="18" Height="18" PaperTray="0">
+			<Canvas>
+				<Canvas>
+					<Clip>
+						<Path FillMode="Winding">
+							<PathFigure IsClosed="True">
+								<PolyLine LineColor="#FF000000">
+									<Point X="0" Y="18" />
+									<Point X="0" Y="0" />
+								</PolyLine>
+								<PolyLine LineColor="#FF000000">
+									<Point X="0" Y="0" />
+									<Point X="18" Y="0" />
+								</PolyLine>
+								<PolyLine LineColor="#FF000000">
+									<Point X="18" Y="0" />
+									<Point X="18" Y="18" />
+								</PolyLine>
+								<PolyLine LineColor="#FF000000">
+									<Point X="18" Y="18" />
+									<Point X="0" Y="18" />
+								</PolyLine>
+							</PathFigure>
+						</Path>
+					</Clip>
+					<Path FillMode="Winding" RenderTransform="1 0 0 -1 0 18">
+						<Brush>
+							<SolidBrush Color="#FFE3E3E3" />
+						</Brush>
+						<PathFigure IsClosed="True">
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="8.1375" />
+								<Point X="12" Y="8.1375" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="8.1375" />
+								<Point X="10.5" Y="9.6375" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="10.5" Y="9.6375" />
+								<Point X="10.5" Y="9.6375" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="10.5" Y="9.6375" />
+								<Point X="10.5" Y="10.2" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="10.5" Y="10.2" />
+								<Point X="10.5" Y="10.2" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="10.5" Y="10.2" />
+								<Point X="12" Y="12.45" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="12.45" />
+								<Point X="12" Y="12.45" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="12.45" />
+								<Point X="12" Y="12.75" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="12.75" />
+								<Point X="12" Y="12.75" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="12.75" />
+								<Point X="7.3875003" Y="12.75" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="7.3875003" Y="12.75" />
+								<Point X="7.3875003" Y="12.75" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="7.3875003" Y="12.75" />
+								<Point X="5.8875003" Y="14.25" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="5.8875003" Y="14.25" />
+								<Point X="5.8875003" Y="14.25" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="5.8875003" Y="14.25" />
+								<Point X="12" Y="14.25" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="14.25" />
+								<Point X="12" Y="14.25" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="14.25" />
+								<Point X="12" Y="15" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="15" />
+								<Point X="12" Y="15" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="15" />
+								<Point X="5.1375003" Y="15" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="5.1375003" Y="15" />
+								<Point X="5.1375003" Y="15" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="5.1375003" Y="15" />
+								<Point X="4.5" Y="15.6375" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="4.5" Y="15.6375" />
+								<Point X="4.5" Y="15.6375" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="4.5" Y="15.6375" />
+								<Point X="4.5" Y="16.5" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="4.5" Y="16.5" />
+								<Point X="4.5" Y="16.5" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="4.5" Y="16.5" />
+								<Point X="13.5" Y="16.5" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="13.5" Y="16.5" />
+								<Point X="13.5" Y="16.5" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="13.5" Y="16.5" />
+								<Point X="13.5" Y="12" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="13.5" Y="12" />
+								<Point X="13.5" Y="12" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="13.5" Y="12" />
+								<Point X="12" Y="9.75" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="9.75" />
+								<Point X="12" Y="9.75" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="9.75" />
+								<Point X="12" Y="8.1375" />
+							</PolyLine>
+						</PathFigure>
+						<PathFigure IsClosed="True">
+							<PolyLine LineColor="#FF000000">
+								<Point X="7.5" Y="3" />
+								<Point X="7.5" Y="3" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="7.5" Y="3" />
+								<Point X="10.5" Y="3" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="10.5" Y="3" />
+								<Point X="10.5" Y="3" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="10.5" Y="3" />
+								<Point X="10.5" Y="5.4" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="10.5" Y="5.4" />
+								<Point X="10.5" Y="5.4" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="10.5" Y="5.4" />
+								<Point X="7.5" Y="8.400001" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="7.5" Y="8.400001" />
+								<Point X="7.5" Y="8.400001" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="7.5" Y="8.400001" />
+								<Point X="7.5" Y="3" />
+							</PolyLine>
+						</PathFigure>
+						<PathFigure IsClosed="True">
+							<PolyLine LineColor="#FF000000">
+								<Point X="14.85" Y="1.0500001" />
+								<Point X="14.85" Y="1.0500001" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="14.85" Y="1.0500001" />
+								<Point X="12" Y="3.9" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="3.9" />
+								<Point X="12" Y="3.9" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="3.9" />
+								<Point X="12" Y="1.5" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="1.5" />
+								<Point X="12" Y="1.5" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="12" Y="1.5" />
+								<Point X="6" Y="1.5" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="6" Y="1.5" />
+								<Point X="6" Y="1.5" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="6" Y="1.5" />
+								<Point X="6" Y="9.900001" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="6" Y="9.900001" />
+								<Point X="6" Y="9.900001" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="6" Y="9.900001" />
+								<Point X="1.0500001" Y="14.85" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="1.0500001" Y="14.85" />
+								<Point X="1.0500001" Y="14.85" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="1.0500001" Y="14.85" />
+								<Point X="2.1000001" Y="15.900001" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="2.1000001" Y="15.900001" />
+								<Point X="15.900001" Y="2.1000001" />
+							</PolyLine>
+							<PolyLine LineColor="#FF000000">
+								<Point X="15.900001" Y="2.1000001" />
+								<Point X="14.85" Y="1.0500001" />
+							</PolyLine>
+						</PathFigure>
+					</Path>
+				</Canvas>
+			</Canvas>
+		</Page>
+	</Group>
+</Aps>

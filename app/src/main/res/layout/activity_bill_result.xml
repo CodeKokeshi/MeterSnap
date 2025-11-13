@@ -17,15 +17,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="?attr/actionBarSize"
-            android:background="?attr/colorPrimary"
+            android:background="?android:attr/colorBackground"
             android:elevation="4dp"
             android:fitsSystemWindows="true"
             android:paddingBottom="8dp"
-            android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
             app:contentInsetStartWithNavigation="0dp"
             app:navigationIcon="?attr/homeAsUpIndicator"
             app:title="Bill Calculation"
-            app:titleTextColor="@android:color/white"
+            app:titleTextColor="?android:attr/textColorPrimary"
             app:titleMarginStart="8dp" />
 
         <!-- Content -->
@@ -234,16 +233,36 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- Done Button -->
-            <Button
-                android:id="@+id/btn_done"
+            <!-- Action Buttons -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:orientation="horizontal"
                 android:layout_marginBottom="80dp"
-                android:padding="16dp"
-                android:text="Done"
-                android:textSize="18sp"
-                android:textStyle="bold" />
+                android:weightSum="2">
+
+                <Button
+                    android:id="@+id/btn_save_to_gallery"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:padding="16dp"
+                    android:text="Save to Gallery"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btn_home"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:padding="16dp"
+                    android:text="Home"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>
