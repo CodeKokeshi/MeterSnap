@@ -1,6 +1,7 @@
 package com.kokeshi.metersnap
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.FrameLayout
@@ -26,15 +27,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnManualInput: ImageButton
     private lateinit var btnSettings: ImageButton
     private lateinit var btnTorch: ImageButton
+    private lateinit var btnHelp: ImageButton
     private lateinit var scanLine: android.view.View
+    private var tutorialOverlay: TutorialOverlay? = null
 
     private var cameraExecutor: ExecutorService? = null
     private var camera: Camera? = null
     private var preview: Preview? = null
     private var isTorchOn = false
+    private var isTutorialActive = false
 
     companion object {
         private const val CAMERA_PERMISSION_CODE = 100
+        private const val PREF_TUTORIAL_COMPLETED = "tutorial_completed"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,6 +58,7 @@ class MainActivity : AppCompatActivity() {
         btnManualInput = findViewById(R.id.btn_manual_input)
         btnSettings = findViewById(R.id.btn_settings)
         btnTorch = findViewById(R.id.btn_torch)
+        btnHelp = findViewById(R.id.btn_help)
         scanLine = findViewById(R.id.scan_line)
 
         cameraExecutor = Executors.newSingleThreadExecutor()
@@ -71,26 +77,47 @@ class MainActivity : AppCompatActivity() {
         addScaleAnimation(btnManualInput)
         addSpinAnimation(btnSettings)
         addScaleAnimation(btnTorch)
+        addScaleAnimation(btnHelp)
 
         btnSnap.setOnClickListener {
-            // TODO: Implement photo capture and OCR processing
+            if (!isTutorialActive) {
+                // TODO: Implement photo capture and OCR processing
+            }
         }
 
         btnManualInput.setOnClickListener {
-            // Navigate to manual input screen
-            val intent = android.content.Intent(this, ManualInputActivity::class.java)
-            startActivity(intent)
+            if (!isTutorialActive) {
+                // Navigate to manual input screen
+                val intent = android.content.Intent(this, ManualInputActivity::class.java)
+                startActivity(intent)
+            }
         }
 
         btnSettings.setOnClickListener {
-            // Navigate to settings screen
-            val intent = android.content.Intent(this, SettingsActivity::class.java)
-            startActivity(intent)
+            if (!isTutorialActive) {
+                // Navigate to settings screen
+                val intent = android.content.Intent(this, SettingsActivity::class.java)
+                startActivity(intent)
+            }
         }
 
         btnTorch.setOnClickListener {
-            toggleTorch()
+            if (!isTutorialActive) {
+                toggleTorch()
+            }
         }
+
+        btnHelp.setOnClickListener {
+            if (!isTutorialActive) {
+                // Show tutorial again
+                startTutorial()
+            } else {
+                Toast.makeText(this, "Complete the tutorial first", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // Check if this is the first launch
+        checkAndShowTutorial()
     }
 
     private fun checkCameraPermission(): Boolean {
@@ -273,6 +300,42 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(this, "No flash available", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun checkAndShowTutorial() {
+        val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
+        val tutorialCompleted = prefs.getBoolean(PREF_TUTORIAL_COMPLETED, false)
+        
+        if (!tutorialCompleted) {
+            // Wait a bit for the layout to be ready
+            findViewById<android.view.View>(R.id.main).postDelayed({
+                startTutorial()
+            }, 500)
+        }
+    }
+
+    private fun startTutorial() {
+        // Remove existing overlay if any
+        tutorialOverlay?.let {
+            val rootView = findViewById<android.view.ViewGroup>(R.id.main)
+            rootView.removeView(it)
+        }
+        
+        // Create fresh tutorial overlay
+        tutorialOverlay = TutorialOverlay(this)
+        val rootView = findViewById<android.view.ViewGroup>(R.id.main)
+        rootView.addView(tutorialOverlay, android.view.ViewGroup.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        isTutorialActive = true
+        tutorialOverlay?.startTutorial {
+            isTutorialActive = false
+            // Mark tutorial as completed
+            val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean(PREF_TUTORIAL_COMPLETED, true).apply()
         }
     }
 
