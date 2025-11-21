@@ -6,9 +6,11 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.core.graphics.createBitmap
 import org.opencv.android.Utils
+import org.opencv.core.Core
 import org.opencv.core.Mat
 import org.opencv.core.MatOfPoint
 import org.opencv.core.Rect
+import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 
@@ -38,8 +40,20 @@ class MeterAnalyzer(
 
 
             // 2. Preprocessing & ROI
+            // Crop to the center strip (Guide Box approximation)
+            // Assuming the guide box is roughly in the vertical center
+            val cropHeight = mat.height() / 4
+            val cropY = (mat.height() - cropHeight) / 2
+            val cropRect = Rect(0, cropY, mat.width(), cropHeight)
+            val croppedMat = Mat(mat, cropRect)
+
             val gray = Mat()
-            Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGB2GRAY)
+            Imgproc.cvtColor(croppedMat, gray, Imgproc.COLOR_RGB2GRAY)
+
+            // Invert colors (Water meters are usually Black text on White background)
+            // MNIST models are trained on White text on Black background.
+            // So we invert: Black(0) -> White(255)
+            Core.bitwise_not(gray, gray)
 
             // Thresholding to find digits
             val binary = Mat()
@@ -47,7 +61,7 @@ class MeterAnalyzer(
             Imgproc.adaptiveThreshold(
                 gray, binary, 255.0,
                 Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
-                Imgproc.THRESH_BINARY_INV, 11, 2.0
+                Imgproc.THRESH_BINARY, 11, 2.0
             )
 
             // Find contours
@@ -66,7 +80,11 @@ class MeterAnalyzer(
                 
                 // Filter based on size and aspect ratio (digits are usually tall)
                 // These values might need tuning based on camera resolution and distance
-                if (rect.height > 50 && rect.width > 20 && aspectRatio < 1.0 && aspectRatio > 0.2) {
+                // Height: Must be significant enough (e.g., > 1/3 of the crop height)
+                // Aspect Ratio: Digits are usually 0.3 to 0.8
+                if (rect.height > cropHeight * 0.3 && 
+                    rect.height < cropHeight * 0.9 &&
+                    aspectRatio > 0.2 && aspectRatio < 0.9) {
                     digitRects.add(rect)
                 }
             }
@@ -87,15 +105,32 @@ class MeterAnalyzer(
             for (rect in digitRects) {
                 if (count >= 5) break
                 
-                // Crop
+                // Crop the digit from the GRAY image (which is already inverted)
                 val digitMat = Mat(gray, rect)
                 
-                // Resize to 28x28
+                // Resize to 28x28 with Padding (Center the digit)
+                // 1. Find max dimension to make it square
+                val maxDim = Math.max(rect.width, rect.height)
+                val squareMat = Mat.zeros(maxDim, maxDim, org.opencv.core.CvType.CV_8UC1)
+                
+                // 2. Copy digit into center of square
+                val offsetX = (maxDim - rect.width) / 2
+                val offsetY = (maxDim - rect.height) / 2
+                
+                val roi = Rect(offsetX, offsetY, rect.width, rect.height)
+                digitMat.copyTo(squareMat.submat(roi))
+
+                // 3. Resize to 20x20 (leaving 4px padding on all sides for 28x28)
                 val resizedMat = Mat()
-                Imgproc.resize(digitMat, resizedMat, Size(28.0, 28.0))
+                Imgproc.resize(squareMat, resizedMat, Size(20.0, 20.0))
+                
+                // 4. Add padding to make it 28x28
+                val finalMat = Mat()
+                Core.copyMakeBorder(resizedMat, finalMat, 4, 4, 4, 4, Core.BORDER_CONSTANT, Scalar(0.0))
                 
                 // Convert back to Bitmap for the classifier
-                val digitBitmap = matToGrayscaleBitmap(resizedMat)
+                val digitBitmap = Bitmap.createBitmap(28, 28, Bitmap.Config.ARGB_8888)
+                Utils.matToBitmap(finalMat, digitBitmap)
 
                 // Classify
                 val digit = classifier.classify(digitBitmap)
@@ -105,7 +140,9 @@ class MeterAnalyzer(
                 }
                 
                 digitMat.release()
+                squareMat.release()
                 resizedMat.release()
+                finalMat.release()
             }
 
             if (resultBuilder.isNotEmpty()) {
@@ -114,6 +151,7 @@ class MeterAnalyzer(
 
             // Cleanup
             mat.release()
+            croppedMat.release()
             gray.release()
             binary.release()
             hierarchy.release()
@@ -130,52 +168,22 @@ class MeterAnalyzer(
      * Handles YUV_420_888 format which is common in CameraX
      */
     private fun imageProxyToMat(image: ImageProxy): Mat {
-        val yBuffer = image.planes[0].buffer
-        val uBuffer = image.planes[1].buffer
-        val vBuffer = image.planes[2].buffer
-
-        val ySize = yBuffer.remaining()
-        val uSize = uBuffer.remaining()
-        val vSize = vBuffer.remaining()
-
-        val nv21 = ByteArray(ySize + uSize + vSize)
-
-        // Copy Y plane
-        yBuffer.get(nv21, 0, ySize)
-
-        // Copy V and U planes (interleaved to NV21 format)
-        vBuffer.get(nv21, ySize, vSize)
-        uBuffer.get(nv21, ySize + vSize, uSize)
-
-        val yuvMat = Mat(image.height + image.height / 2, image.width, org.opencv.core.CvType.CV_8UC1)
-        yuvMat.put(0, 0, nv21)
-
-        val rgbMat = Mat()
-        Imgproc.cvtColor(yuvMat, rgbMat, Imgproc.COLOR_YUV2RGB_NV21)
-
-        // Handle rotation
-        val rotationDegrees = image.imageInfo.rotationDegrees
-        val rotatedMat = if (rotationDegrees != 0) {
-            val center = org.opencv.core.Point(rgbMat.cols() / 2.0, rgbMat.rows() / 2.0)
-            val rotationMatrix = Imgproc.getRotationMatrix2D(center, rotationDegrees.toDouble(), 1.0)
-            val rotated = Mat()
-            Imgproc.warpAffine(rgbMat, rotated, rotationMatrix, rgbMat.size())
-            rgbMat.release()
-            rotated
-        } else {
-            rgbMat
+        // For simplicity in this example, we'll use the Bitmap conversion provided by CameraX or Android
+        // But since we need a Mat, and ImageProxy -> Bitmap -> Mat is easier than raw YUV handling for now:
+        val bitmap = image.toBitmap()
+        val mat = Mat()
+        if (bitmap != null) {
+            // Handle rotation
+            val rotation = image.imageInfo.rotationDegrees
+            val rotatedBitmap = if (rotation != 0) {
+                val matrix = android.graphics.Matrix()
+                matrix.postRotate(rotation.toFloat())
+                Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            } else {
+                bitmap
+            }
+            Utils.bitmapToMat(rotatedBitmap, mat)
         }
-
-        yuvMat.release()
-        return rotatedMat
-    }
-
-    /**
-     * Convert a grayscale Mat to Bitmap
-     */
-    private fun matToGrayscaleBitmap(mat: Mat): Bitmap {
-        val bitmap = createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
-        Utils.matToBitmap(mat, bitmap)
-        return bitmap
+        return mat
     }
 }
