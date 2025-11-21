@@ -1,6 +1,12 @@
 package com.kokeshi.metersnap
 
+import android.content.ContentValues
+import android.content.Context
 import android.graphics.Bitmap
+import android.media.MediaScannerConnection
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -12,15 +18,26 @@ import org.opencv.core.MatOfPoint
 import org.opencv.core.Rect
 import org.opencv.core.Scalar
 import org.opencv.core.Size
+import org.opencv.core.CvType
 import org.opencv.imgproc.Imgproc
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MeterAnalyzer(
+    private val context: Context,
     private val classifier: DigitClassifier,
     private val onResult: (String) -> Unit
 ) : ImageAnalysis.Analyzer {
 
     private var lastAnalyzedTimestamp = 0L
     private val interval = 2000L // 2 seconds
+    private val dateFormatter = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+    private var debugCounter = 0
+    private val debugFolderName = "MeterSnapDigits"
+    private val debugRelativePath = "Pictures/$debugFolderName"
 
     override fun analyze(image: ImageProxy) {
         val currentTimestamp = System.currentTimeMillis()
@@ -105,13 +122,13 @@ class MeterAnalyzer(
             for (rect in digitRects) {
                 if (count >= 5) break
                 
-                // Crop the digit from the GRAY image (which is already inverted)
-                val digitMat = Mat(gray, rect)
+                // Crop the digit from the binary mask (already inverted to white digits on black)
+                val digitMat = Mat(binary, rect)
                 
                 // Resize to 28x28 with Padding (Center the digit)
                 // 1. Find max dimension to make it square
                 val maxDim = Math.max(rect.width, rect.height)
-                val squareMat = Mat.zeros(maxDim, maxDim, org.opencv.core.CvType.CV_8UC1)
+                val squareMat = Mat.zeros(maxDim, maxDim, CvType.CV_8UC1)
                 
                 // 2. Copy digit into center of square
                 val offsetX = (maxDim - rect.width) / 2
@@ -122,11 +139,12 @@ class MeterAnalyzer(
 
                 // 3. Resize to 20x20 (leaving 4px padding on all sides for 28x28)
                 val resizedMat = Mat()
-                Imgproc.resize(squareMat, resizedMat, Size(20.0, 20.0))
+                Imgproc.resize(squareMat, resizedMat, Size(20.0, 20.0), 0.0, 0.0, Imgproc.INTER_NEAREST)
                 
                 // 4. Add padding to make it 28x28
                 val finalMat = Mat()
                 Core.copyMakeBorder(resizedMat, finalMat, 4, 4, 4, 4, Core.BORDER_CONSTANT, Scalar(0.0))
+                Imgproc.threshold(finalMat, finalMat, 127.0, 255.0, Imgproc.THRESH_BINARY)
                 
                 // Convert back to Bitmap for the classifier
                 val digitBitmap = Bitmap.createBitmap(28, 28, Bitmap.Config.ARGB_8888)
@@ -134,6 +152,7 @@ class MeterAnalyzer(
 
                 // Classify
                 val digit = classifier.classify(digitBitmap)
+                saveDigitBitmap(digitBitmap, digit, rect)
                 if (digit != -1) {
                     resultBuilder.append(digit)
                     count++
@@ -161,6 +180,55 @@ class MeterAnalyzer(
         } finally {
             image.close()
         }
+    }
+
+    private fun saveDigitBitmap(bitmap: Bitmap, predictedDigit: Int, rect: Rect) {
+        try {
+            val timestamp = dateFormatter.format(Date())
+            val predictedLabel = if (predictedDigit >= 0) predictedDigit.toString() else "unknown"
+            val fileName = "${timestamp}_${debugCounter++}_pred-${predictedLabel}_${rect.width}x${rect.height}.png"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                saveViaMediaStore(bitmap, fileName)
+            } else {
+                saveLegacy(bitmap, fileName)
+            }
+        } catch (e: Exception) {
+            Log.e("MeterAnalyzer", "Failed to save digit bitmap", e)
+        }
+    }
+
+    private fun saveViaMediaStore(bitmap: Bitmap, fileName: String) {
+        val resolver = context.contentResolver
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, debugRelativePath)
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        if (uri != null) {
+            resolver.openOutputStream(uri)?.use { outputStream ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+            }
+            contentValues.clear()
+            contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+            resolver.update(uri, contentValues, null, null)
+            Log.d("MeterAnalyzer", "Saved digit debug image to MediaStore: $uri")
+        } else {
+            Log.e("MeterAnalyzer", "Failed to insert MediaStore record for $fileName")
+        }
+    }
+
+    private fun saveLegacy(bitmap: Bitmap, fileName: String) {
+        val picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+        val debugDir = File(picturesDir, debugFolderName).apply { if (!exists()) mkdirs() }
+        val outFile = File(debugDir, fileName)
+        FileOutputStream(outFile).use { fos ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
+        }
+        MediaScannerConnection.scanFile(context, arrayOf(outFile.absolutePath), arrayOf("image/png"), null)
+        Log.d("MeterAnalyzer", "Saved digit debug image: ${outFile.absolutePath}")
     }
 
     /**

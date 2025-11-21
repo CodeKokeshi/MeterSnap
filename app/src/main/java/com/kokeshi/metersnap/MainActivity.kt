@@ -3,6 +3,7 @@ package com.kokeshi.metersnap
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -79,10 +80,10 @@ class MainActivity : AppCompatActivity() {
         // Start scanning animation
         startScanAnimation()
 
-        if (checkCameraPermission()) {
+        if (hasAllRequiredPermissions()) {
             startCamera()
         } else {
-            requestCameraPermission()
+            requestAllRequiredPermissions()
         }
 
         // Add press animations to buttons
@@ -133,17 +134,32 @@ class MainActivity : AppCompatActivity() {
         checkAndShowTutorial()
     }
 
-    private fun checkCameraPermission(): Boolean {
-        return ContextCompat.checkSelfPermission(
+    private fun hasAllRequiredPermissions(): Boolean {
+        val cameraGranted = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
+
+        val storageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            true
+        } else {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+
+        return cameraGranted && storageGranted
     }
 
-    private fun requestCameraPermission() {
+    private fun requestAllRequiredPermissions() {
+        val permissions = mutableListOf(Manifest.permission.CAMERA)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
         ActivityCompat.requestPermissions(
             this,
-            arrayOf(Manifest.permission.CAMERA),
+            permissions.toTypedArray(),
             CAMERA_PERMISSION_CODE
         )
     }
@@ -155,10 +171,10 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == CAMERA_PERMISSION_CODE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            if (hasAllRequiredPermissions()) {
                 startCamera()
             } else {
-                Toast.makeText(this, "Camera permission is required", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Camera and storage permissions are required", Toast.LENGTH_SHORT).show()
                 finish()
             }
         }
@@ -189,7 +205,7 @@ class MainActivity : AppCompatActivity() {
                     .setBackpressureStrategy(androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
                     .also {
-                        it.setAnalyzer(cameraExecutor!!, MeterAnalyzer(digitClassifier) { result ->
+                        it.setAnalyzer(cameraExecutor!!, MeterAnalyzer(applicationContext, digitClassifier) { result ->
                             runOnUiThread {
                                 Toast.makeText(this, "Detected: $result", Toast.LENGTH_SHORT).show()
                                 android.util.Log.d("MeterSnap", "Detected Digits: $result")
