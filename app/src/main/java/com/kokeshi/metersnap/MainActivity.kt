@@ -18,6 +18,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import org.opencv.android.OpenCVLoader
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -36,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private var preview: Preview? = null
     private var isTorchOn = false
     private var isTutorialActive = false
+    private lateinit var digitClassifier: DigitClassifier
 
     companion object {
         private const val CAMERA_PERMISSION_CODE = 100
@@ -62,6 +64,17 @@ class MainActivity : AppCompatActivity() {
         scanLine = findViewById(R.id.scan_line)
 
         cameraExecutor = Executors.newSingleThreadExecutor()
+
+        // Initialize OpenCV
+        if (OpenCVLoader.initDebug()) {
+            android.util.Log.d("MainActivity", "OpenCV loaded successfully")
+        } else {
+            android.util.Log.e("MainActivity", "OpenCV initialization failed!")
+        }
+
+        // Initialize DigitClassifier
+        digitClassifier = DigitClassifier(this)
+        digitClassifier.initialize()
 
         // Start scanning animation
         startScanAnimation()
@@ -171,6 +184,19 @@ class MainActivity : AppCompatActivity() {
 
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
+                // Image Analysis
+                val imageAnalysis = androidx.camera.core.ImageAnalysis.Builder()
+                    .setBackpressureStrategy(androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
+                    .also {
+                        it.setAnalyzer(cameraExecutor!!, MeterAnalyzer(digitClassifier) { result ->
+                            runOnUiThread {
+                                Toast.makeText(this, "Detected: $result", Toast.LENGTH_SHORT).show()
+                                android.util.Log.d("MeterSnap", "Detected Digits: $result")
+                            }
+                        })
+                    }
+
                 // Unbind all use cases before rebinding
                 cameraProvider.unbindAll()
 
@@ -178,7 +204,8 @@ class MainActivity : AppCompatActivity() {
                 camera = cameraProvider.bindToLifecycle(
                     this,
                     cameraSelector,
-                    preview
+                    preview,
+                    imageAnalysis
                 )
             } catch (e: Exception) {
                 Toast.makeText(this, "Failed to start camera: ${e.message}", Toast.LENGTH_LONG).show()
@@ -342,5 +369,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor?.shutdown()
+        if (::digitClassifier.isInitialized) {
+            digitClassifier.close()
+        }
     }
 }

@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "MeterSnap"
 include(":app")
+include(":opencv")
