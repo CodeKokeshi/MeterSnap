@@ -414,20 +414,38 @@ class MeterAnalyzer(
         }
         
         // Adjust confidence based on validation
-        // BOOST for valid readings, REDUCE for invalid
+        // SIMPLE RULE: If reading is VALID and we're confident in detection, go to 100%
+        // If reading is INVALID (below previous), cap at 50%
+        val detectedValue = reading.toIntOrNull() ?: 0
+        
         val finalConfidence = when {
+            // No validation possible (no previous reading)
             validationResult == null -> confidence
-            validationResult.errorCode == ReadingValidator.ErrorCode.VALID -> {
-                // VALID reading matching previous - BOOST!
-                Math.min(100f, confidence * 1.1f)  
+            
+            // VALID reading - BOOST to at least input confidence, maybe more
+            validationResult.isValid -> {
+                if (confidence >= 85f) {
+                    // High detection confidence + valid = 100%!
+                    100f
+                } else {
+                    // Boost valid readings
+                    Math.min(100f, confidence * 1.2f)
+                }
             }
-            validationResult.errorCode == ReadingValidator.ErrorCode.HIGH_USAGE_WARNING -> {
-                // High but plausible - slight boost
-                Math.min(100f, confidence * 1.05f)
+            
+            // INVALID: Reading is BELOW previous (impossible!)
+            validationResult.errorCode == ReadingValidator.ErrorCode.READING_TOO_LOW -> {
+                // This is IMPOSSIBLE - meter can't go backwards
+                // But we still detected SOMETHING clearly, just wrong
+                Math.min(confidence, 40f)  // Cap at 40%
             }
-            validationResult.isValid -> confidence  // Other valid cases - keep as is
-            else -> confidence * 0.7f // Invalid readings get reduced confidence
+            
+            // Other invalid cases - mild penalty
+            else -> Math.min(confidence, 70f)
         }
+        
+        // Debug log
+        Log.d("MeterAnalyzer", "emitResult: reading='$finalReading', inConf=$confidence, outConf=$finalConfidence, validation=${validationResult?.errorCode}, prev=$previousReading")
         
         val result = AnalyzerResult(
             reading = finalReading,
@@ -1055,7 +1073,11 @@ class MeterAnalyzer(
                         currentConfidence = 100f
                         lastSeenLockedTime = System.currentTimeMillis()
                         
-                        // Mark as Hybrid success with validation
+                        // Record to predictor
+                        readingPredictor.recordObservation(formattedResult)
+                        
+                        // Mark as Hybrid success - both detectors agree = CERTAIN!
+                        Log.d("MeterAnalyzer", "LeNet+MLKit agree: emitting '$formattedResult' with 100% confidence")
                         emitResult(formattedResult, 100f, allRects, acceptedRects, imageWidth, imageHeight, "H")
                         mat.release()
                         croppedMat.release()
@@ -1100,12 +1122,20 @@ class MeterAnalyzer(
                                            votingResult.agreementLevel == ReadingValidator.AgreementLevel.MAJORITY) "V" else "M"
                         
                         // === SMART CONFIDENCE: Lock in the MLKit result ===
+                        // MLKit override means we're CONFIDENT in this result
+                        // Use at LEAST 90%, ignore validation penalty
                         lockedReading = finalReading
                         lockedFrameCount = historySize
                         currentConfidence = Math.max(votingResult.confidence, 90f)
                         lastSeenLockedTime = System.currentTimeMillis()
                         
-                        emitResult(finalReading, currentConfidence, allRects, acceptedRects, imageWidth, imageHeight, sourceTag)
+                        // Record to predictor
+                        readingPredictor.recordObservation(finalReading)
+                        
+                        // Emit with HIGH confidence - MLKit saw it clearly!
+                        // Pass 95f directly to bypass any validation penalties
+                        Log.d("MeterAnalyzer", "MLKit override: emitting '$finalReading' with 95% confidence")
+                        emitResult(finalReading, 95f, allRects, acceptedRects, imageWidth, imageHeight, sourceTag)
                         mat.release()
                         croppedMat.release()
                         gray.release()
@@ -1343,24 +1373,31 @@ class MeterAnalyzer(
                             // If voting agrees with our lock, boost confidence
                             // If voting gives different result, UPDATE the lock to match!
                             if (ReadingValidator.areReadingsEquivalent(finalResult, lockedReading)) {
-                                // Voting confirmed our lock! Big boost!
-                                currentConfidence = Math.min(100f, currentConfidence + 15f)
+                                // Voting confirmed our lock! We've seen this multiple times!
                                 lockedFrameCount++
+                                // After 2 frames of same reading, just go to 100%
+                                if (lockedFrameCount >= 2) {
+                                    currentConfidence = 100f
+                                } else {
+                                    currentConfidence = Math.min(100f, currentConfidence + 20f)
+                                }
                             } else {
                                 // Voting chose something different - sync lock to voted result
                                 lockedReading = finalResult
                                 lockedFrameCount = 1
                                 lastSeenLockedTime = System.currentTimeMillis()
-                                // But don't reset confidence too much if voting is strong
+                                // Start high if voting is unanimous
                                 if (votingResult.agreementLevel == ReadingValidator.AgreementLevel.UNANIMOUS) {
                                     currentConfidence = 95f
                                 } else if (votingResult.agreementLevel == ReadingValidator.AgreementLevel.MAJORITY) {
-                                    currentConfidence = Math.max(currentConfidence, 80f)
+                                    currentConfidence = 90f
+                                } else {
+                                    currentConfidence = 85f
                                 }
                             }
                             
-                            // Final confidence is the HIGHER of smart confidence or voting
-                            finalConfidence = Math.max(currentConfidence, votingResult.confidence)
+                            // SIMPLE: Use current confidence (which grows with frames)
+                            finalConfidence = currentConfidence
                         } else {
                             finalResult = bestReading
                             finalConfidence = confidence
@@ -1372,31 +1409,17 @@ class MeterAnalyzer(
                         finalSource = "L"
                     }
                     
-                    // === PREDICTOR FINAL CHECK ===
-                    // If predictor is very confident about a reading, use its confidence
-                    val prediction = readingPredictor.predict(previousReading)
-                    if (prediction.predictedReading.isNotEmpty()) {
-                        val predictedNorm = ReadingValidator.normalizeReading(prediction.predictedReading)
-                        val finalNorm = ReadingValidator.normalizeReading(finalResult)
-                        
-                        if (predictedNorm == finalNorm && prediction.confidence > finalConfidence) {
-                            // Predictor agrees AND has higher confidence - use it!
-                            Log.d("MeterAnalyzer", "Predictor boost: ${finalConfidence.toInt()}% -> ${prediction.confidence.toInt()}% for '$finalResult'")
-                            // Use predictor confidence
-                            currentConfidence = prediction.confidence
-                        }
-                        
-                        // Log prediction stats
-                        Log.d("MeterAnalyzer", "Predictor: '${prediction.predictedReading}' @ ${prediction.confidence.toInt()}%, obs=${readingPredictor.getObservationCount()}, ${prediction.reason}")
+                    // === SIMPLE FINAL CHECK ===
+                    // If we've locked on this reading for 3+ frames, just go to 100%
+                    if (lockedFrameCount >= 3 && ReadingValidator.normalizeReading(finalResult) == ReadingValidator.normalizeReading(lockedReading)) {
+                        finalConfidence = 100f
+                        Log.d("MeterAnalyzer", "Lock override: seen '$finalResult' for $lockedFrameCount frames -> 100%")
                     }
                     
-                    // Use the higher of calculated confidence and predictor confidence
-                    val emitConfidence = Math.max(finalConfidence, if (ReadingValidator.normalizeReading(prediction.predictedReading) == ReadingValidator.normalizeReading(finalResult)) prediction.confidence else 0f)
-                    
                     // Log for debugging
-                    Log.d("MeterAnalyzer", "EMIT: locked='$lockedReading', frames=$lockedFrameCount, currentConf=$currentConfidence, emitConf=$emitConfidence, result='$finalResult', src=$finalSource")
+                    Log.d("MeterAnalyzer", "EMIT: locked='$lockedReading', frames=$lockedFrameCount, conf=$finalConfidence, result='$finalResult', src=$finalSource")
 
-                    emitResult(finalResult, emitConfidence, allRects, acceptedRects, imageWidth, imageHeight, finalSource)
+                    emitResult(finalResult, finalConfidence, allRects, acceptedRects, imageWidth, imageHeight, finalSource)
                 }
             } else {
                  // Pass empty/current if no history yet - also handle decay
