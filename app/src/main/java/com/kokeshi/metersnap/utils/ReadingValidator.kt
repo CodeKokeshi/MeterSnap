@@ -57,6 +57,39 @@ object ReadingValidator {
      */
     const val MAX_READING_VALUE = 99999
     
+    // ===== NORMALIZATION =====
+    
+    /**
+     * Normalizes a reading string for comparison.
+     * "04525", "4525", "004525" all become "4525" (the numeric value as string).
+     * This prevents the voting system from treating equivalent readings as different.
+     */
+    fun normalizeReading(reading: String): String {
+        if (reading.isBlank()) return ""
+        val numeric = reading.toIntOrNull() ?: return reading
+        return numeric.toString()
+    }
+    
+    /**
+     * Checks if two readings represent the same numeric value.
+     * "04525" == "4525" == "004525" → true
+     */
+    fun areReadingsEquivalent(reading1: String, reading2: String): Boolean {
+        if (reading1.isBlank() || reading2.isBlank()) return false
+        val num1 = reading1.toIntOrNull() ?: return false
+        val num2 = reading2.toIntOrNull() ?: return false
+        return num1 == num2
+    }
+    
+    /**
+     * Formats a reading to standard 5-digit display format with leading zeros.
+     * 4525 → "04525"
+     */
+    fun formatReading(reading: String): String {
+        val numeric = reading.toIntOrNull() ?: return reading
+        return String.format("%05d", numeric)
+    }
+    
     // ===== VALIDATION RESULT =====
     
     data class ValidationResult(
@@ -295,6 +328,8 @@ object ReadingValidator {
      * Compares readings from LeNet, MLKit, and Hybrid approaches.
      * Uses voting to determine the most likely correct reading.
      * 
+     * IMPORTANT: Uses NORMALIZED comparison so "04525" and "4525" are treated as equal!
+     * 
      * @param lenetReading Reading from pure LeNet classification
      * @param mlkitReading Reading from Google ML Kit text recognition
      * @param hybridReading Reading from ML Kit localization + LeNet classification
@@ -309,11 +344,13 @@ object ReadingValidator {
     ): VotingResult {
         Log.d(TAG, "Voting: LeNet='$lenetReading', MLKit='$mlkitReading', Hybrid='$hybridReading'")
         
+        // Filter and normalize readings
         val readings = listOf(
             "LeNet" to lenetReading,
             "MLKit" to mlkitReading,
             "Hybrid" to hybridReading
         ).filter { it.second.isNotBlank() }
+            .map { (source, reading) -> source to normalizeReading(reading) }
         
         if (readings.isEmpty()) {
             return VotingResult(
@@ -324,33 +361,35 @@ object ReadingValidator {
             )
         }
         
-        // Case 1: Check for unanimous agreement
-        val allSame = readings.map { it.second }.distinct().size == 1
-        if (allSame && readings.size >= 2) {
+        // Case 1: Check for unanimous agreement (using NORMALIZED values!)
+        val normalizedValues = readings.map { it.second }.distinct()
+        if (normalizedValues.size == 1 && readings.size >= 2) {
+            // All agree! Return formatted version (with leading zeros)
             return VotingResult(
-                consensusReading = readings.first().second,
+                consensusReading = formatReading(normalizedValues.first()),
                 confidence = 100f,
                 agreementLevel = AgreementLevel.UNANIMOUS,
-                details = "All ${readings.size} detectors agree: ${readings.first().second}"
+                details = "All ${readings.size} detectors agree: ${formatReading(normalizedValues.first())}"
             )
         }
         
-        // Case 2: Check for majority (2/3 agree)
+        // Case 2: Check for majority (2/3 agree) using NORMALIZED comparison
         val frequencyMap = readings.groupingBy { it.second }.eachCount()
         val majority = frequencyMap.filter { it.value >= 2 }.maxByOrNull { it.value }
         if (majority != null) {
             val agreers = readings.filter { it.second == majority.key }.map { it.first }
             return VotingResult(
-                consensusReading = majority.key,
+                consensusReading = formatReading(majority.key),
                 confidence = 85f,
                 agreementLevel = AgreementLevel.MAJORITY,
-                details = "Majority: ${agreers.joinToString(" & ")} agree on ${majority.key}"
+                details = "Majority: ${agreers.joinToString(" & ")} agree on ${formatReading(majority.key)}"
             )
         }
         
         // Case 3: Check prefix match (first 4 digits same, last differs - rolling digit scenario)
         if (readings.size >= 2) {
-            val prefixes = readings.map { it.second.take(4) to it }
+            // Use normalized readings for prefix comparison
+            val prefixes = readings.map { formatReading(it.second).take(4) to it }
             val prefixGroups = prefixes.groupBy { it.first }.filter { it.value.size >= 2 }
             
             if (prefixGroups.isNotEmpty()) {
@@ -358,12 +397,13 @@ object ReadingValidator {
                 
                 // Among readings with same prefix, pick the one most consistent with previous
                 val validatedCandidates = bestPrefix.value.mapNotNull { (_, pair) ->
-                    val validation = validateReading(pair.second, previousReading)
-                    if (validation.isValid) pair.second to validation else null
+                    val formatted = formatReading(pair.second)
+                    val validation = validateReading(formatted, previousReading)
+                    if (validation.isValid) formatted to validation else null
                 }
                 
                 val winner = validatedCandidates.maxByOrNull { it.second.confidence }?.first
-                    ?: bestPrefix.value.first().second.second
+                    ?: formatReading(bestPrefix.value.first().second.second)
                 
                 return VotingResult(
                     consensusReading = winner,
@@ -376,8 +416,9 @@ object ReadingValidator {
         
         // Case 4: No consensus - pick the most valid one
         val validatedReadings = readings.mapNotNull { (source, reading) ->
-            val validation = validateReading(reading, previousReading)
-            if (validation.isValid) Triple(source, reading, validation) else null
+            val formatted = formatReading(reading)
+            val validation = validateReading(formatted, previousReading)
+            if (validation.isValid) Triple(source, formatted, validation) else null
         }
         
         if (validatedReadings.isNotEmpty()) {

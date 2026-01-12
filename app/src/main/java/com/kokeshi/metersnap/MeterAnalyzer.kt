@@ -716,17 +716,35 @@ class MeterAnalyzer(
             }
 
             var currentResult = resultBuilder.toString()
+            
+            // === TRAILING NOISE DETECTION ===
+            // If we got more than 5 digits, we have noise at the end (e.g., "045251" -> "04525")
+            // This happens when a small artifact after the 5th digit gets detected
+            if (currentResult.length > 5) {
+                Log.d("MeterAnalyzer", "Detected ${currentResult.length} digits: '$currentResult'. Trimming trailing noise.")
+                // Keep only the first 5 digits (the real meter reading)
+                currentResult = currentResult.take(5)
+            }
 
             // --- PARTIAL MATCH RECOVERY ---
             // If we only found 4 digits (e.g. 0161), check if we recently saw a 5-digit version (0161x).
             // This handles cases where the last digit is rolling or obscured but was briefly visible.
-            if (currentResult.length == 4) {
-                val potentialMatches = resultHistory.filter { it.length == 5 && it.startsWith(currentResult) }
+            // Use NORMALIZED comparison (so "4525" can match with history entries like "04525")
+            val normalizedCurrent = ReadingValidator.normalizeReading(currentResult)
+            if (normalizedCurrent.length == 4 || (currentResult.length == 4 && normalizedCurrent.length <= 4)) {
+                // Look for history entries that START with the same prefix
+                val potentialMatches = resultHistory.filter { historyEntry ->
+                    val normalizedHistory = ReadingValidator.normalizeReading(historyEntry)
+                    normalizedHistory.length >= 5 && normalizedHistory.startsWith(normalizedCurrent)
+                }
                 if (potentialMatches.isNotEmpty()) {
-                    // Find the most frequent 5th digit
-                    val bestMatch = potentialMatches.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+                    // Find the most frequent 5th digit (use normalized grouping)
+                    val bestMatch = potentialMatches
+                        .groupingBy { ReadingValidator.normalizeReading(it) }
+                        .eachCount()
+                        .maxByOrNull { it.value }?.key
                     if (bestMatch != null) {
-                        currentResult = bestMatch
+                        currentResult = ReadingValidator.formatReading(bestMatch)
                     }
                 }
             }
@@ -748,18 +766,21 @@ class MeterAnalyzer(
             // --- INTEGRATION: ML KIT "JUDGE" ---
             if (cachedMLKitResult.isNotEmpty()) {
                 // Case A: ML Kit found 5 digits. It is the authority.
-                if (cachedMLKitResult.length == 5) {
+                if (cachedMLKitResult.length == 5 || ReadingValidator.normalizeReading(cachedMLKitResult).length >= 4) {
                     // 1. Confidence Boost (Instant Win)
-                    // If LeNet agrees with ML Kit, we trust it 100% immediately.
-                    if (currentResult == cachedMLKitResult) {
+                    // If LeNet agrees with ML Kit (using NORMALIZED comparison!), we trust it 100% immediately.
+                    // "04525" == "4525" should be considered a match!
+                    if (ReadingValidator.areReadingsEquivalent(currentResult, cachedMLKitResult)) {
+                        // Use the formatted (5-digit with leading zeros) version
+                        val formattedResult = ReadingValidator.formatReading(currentResult)
                         // We will handle this in the voting section by forcing history
                         resultHistory.clear()
-                        repeat(historySize) { resultHistory.add(currentResult) }
+                        repeat(historySize) { resultHistory.add(formattedResult) }
                         // Cache results for voting
-                        cachedLenetResult = currentResult
-                        cachedHybridResult = currentResult
+                        cachedLenetResult = formattedResult
+                        cachedHybridResult = formattedResult
                         // Mark as Hybrid success with validation
-                        emitResult(currentResult, 100f, allRects, acceptedRects, imageWidth, imageHeight, "H")
+                        emitResult(formattedResult, 100f, allRects, acceptedRects, imageWidth, imageHeight, "H")
                         mat.release()
                         croppedMat.release()
                         gray.release()
@@ -939,50 +960,67 @@ class MeterAnalyzer(
                 captureDebugNextFrame = false
             }
             
-            // Voting Logic
-            if (currentResult.isNotEmpty() && currentResult.length >= 3) { // Only consider results with at least 3 digits
-                resultHistory.addLast(currentResult)
+            // === NORMALIZE the result before adding to history ===
+            // This ensures "04525" and "4525" are treated as the same reading!
+            val normalizedResult = if (currentResult.isNotEmpty()) {
+                ReadingValidator.formatReading(currentResult) // Converts to "04525" format
+            } else {
+                currentResult
+            }
+            
+            // Voting Logic - using NORMALIZED results
+            if (normalizedResult.isNotEmpty() && normalizedResult.length >= 3) { // Only consider results with at least 3 digits
+                resultHistory.addLast(normalizedResult)
                 if (resultHistory.size > historySize) {
                     resultHistory.removeFirst()
                 }
             } else {
                 // If we see nothing (or garbage) this frame, we should degrade confidence.
                 // If we see NOTHING (empty), clear history immediately to prevent "stuck" results.
-                if (currentResult.isEmpty()) {
+                if (normalizedResult.isEmpty()) {
                     resultHistory.clear()
                 }
             }
 
-            // Calculate most frequent result
+            // Calculate most frequent result using NORMALIZED comparison
             if (resultHistory.isNotEmpty()) {
-                val frequencyMap = resultHistory.groupingBy { it }.eachCount()
+                // Group by NORMALIZED value (so "04525", "4525", "004525" all count together)
+                val frequencyMap = resultHistory
+                    .groupingBy { ReadingValidator.normalizeReading(it) }
+                    .eachCount()
                 val mostFrequent = frequencyMap.maxByOrNull { it.value }
                 
                 if (mostFrequent != null) {
+                    // Format the result properly (with leading zeros)
+                    val formattedResult = ReadingValidator.formatReading(mostFrequent.key)
+                    
                     // Boost confidence calculation
                     // If we have 3/5 agreement, that's 60%. But for UI "snappiness", we can boost it.
-                    // If we have 3 consecutive identical results, we should treat it as high confidence.
+                    // If we have 3 consecutive identical results (normalized), we should treat it as high confidence.
                     
                     var confidence = (mostFrequent.value.toFloat() / resultHistory.size) * 100
                     
-                    // Bonus for recent consistency
-                    if (resultHistory.size >= 3 && 
-                        resultHistory.takeLast(3).all { it == mostFrequent.key }) {
+                    // Bonus for recent consistency (using normalized comparison)
+                    val lastThreeNormalized = resultHistory.takeLast(3).map { ReadingValidator.normalizeReading(it) }
+                    if (resultHistory.size >= 3 && lastThreeNormalized.distinct().size == 1) {
                         confidence = Math.max(confidence, 90f) // Boost to 90% if last 3 frames agree
                     }
 
                     // --- 4-DIGIT TRAP ---
                     // If we are stuck on 4 digits (e.g. 0161) and ML Kit isn't helping,
                     // we must NOT submit this as a success. It's a partial read.
-                    if (mostFrequent.key.length == 4) {
+                    // Check the NORMALIZED length (without leading zeros)
+                    val normalizedLength = mostFrequent.key.length
+                    if (normalizedLength == 4 && mostFrequent.key.toIntOrNull() ?: 0 >= 1000) {
+                        // It's actually a 4-digit number (1000-9999), not a 5-digit with leading zero
                         // Cap confidence at 85% so it never triggers "Hold Steady" (which needs 90%)
                         // This forces the user to keep adjusting until we find the 5th digit.
                         confidence = Math.min(confidence, 85f)
                     }
                     
                     // === DECISION ALGORITHM: FINAL VOTING ===
-                    // Cache the LeNet result for voting
-                    cachedLenetResult = mostFrequent.key
+                    // Cache the LeNet result for voting (use formatted version)
+                    cachedLenetResult = formattedResult
                     
                     // If we have results from multiple detectors, vote before emitting
                     val finalResult: String
@@ -1008,12 +1046,12 @@ class MeterAnalyzer(
                             }
                             Log.d("MeterAnalyzer", "Voting result: ${votingResult.details}")
                         } else {
-                            finalResult = mostFrequent.key
+                            finalResult = formattedResult
                             finalConfidence = confidence
                             finalSource = "L"
                         }
                     } else {
-                        finalResult = mostFrequent.key
+                        finalResult = formattedResult
                         finalConfidence = confidence
                         finalSource = "L"
                     }
@@ -1022,7 +1060,7 @@ class MeterAnalyzer(
                 }
             } else {
                  // Pass empty/current if no history yet
-                 emitResult(currentResult, 0f, allRects, acceptedRects, imageWidth, imageHeight, "L")
+                 emitResult(normalizedResult, 0f, allRects, acceptedRects, imageWidth, imageHeight, "L")
             }
 
             // Cleanup
