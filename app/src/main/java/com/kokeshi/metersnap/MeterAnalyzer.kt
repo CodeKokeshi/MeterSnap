@@ -153,8 +153,14 @@ class MeterAnalyzer(
      * Call this when the user confirms a reading or updates settings.
      */
     fun setPreviousReading(reading: Int) {
+        // If the previous reading CHANGED, reset all detection state!
+        // This prevents old locked readings from being validated against new previous value
+        if (reading != previousReading) {
+            Log.d("MeterAnalyzer", "Previous reading CHANGED: $previousReading -> $reading, RESETTING state!")
+            reset()
+        }
         previousReading = reading
-        Log.d("MeterAnalyzer", "Previous reading updated to: $reading")
+        Log.d("MeterAnalyzer", "Previous reading set to: $reading")
     }
 
     fun reset() {
