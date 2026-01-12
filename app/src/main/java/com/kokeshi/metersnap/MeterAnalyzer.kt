@@ -208,6 +208,7 @@ class MeterAnalyzer(
      * 2. Previous confidence level (momentum)
      * 3. Lock-in behavior (resistance to noise once confident)
      * 4. FAST RELEASE when seeing nothing or different reading
+     * 5. VALIDATION against previous reading - BOOST if valid!
      * 
      * @param detectedReading The normalized reading from this frame
      * @param historyAgreement What percentage of history buffer agrees (0-100)
@@ -221,6 +222,26 @@ class MeterAnalyzer(
         // Reset the "no valid reading" counter since we have something
         framesSinceValidReading = 0
         
+        // === VALIDATION BOOST ===
+        // If this reading makes sense given the previous reading, BOOST confidence!
+        var validationBoost = 0f
+        if (previousReading > 0 && normalizedDetected.length >= 4) {
+            val validationResult = ReadingValidator.validateReading(detectedReading, previousReading)
+            if (validationResult.isValid) {
+                // Valid reading! Big confidence boost
+                validationBoost = if (validationResult.errorCode == ReadingValidator.ErrorCode.VALID) {
+                    25f  // Perfect - reasonable usage
+                } else {
+                    15f  // High usage warning but still valid
+                }
+                Log.d("MeterAnalyzer", "Validation BOOST: +${validationBoost.toInt()}% (previous=$previousReading, detected=$normalizedDetected)")
+            }
+        }
+        
+        // === 5-DIGIT BONUS ===
+        // If we detected exactly 5 digits, that's already a strong signal!
+        val fiveDigitBonus = if (normalizedDetected.length == 5) 15f else 0f
+        
         // Case 1: Same reading as our lock (or we have no lock yet)
         if (normalizedDetected == normalizedLocked || lockedReading.isEmpty()) {
             if (lockedReading.isEmpty() && normalizedDetected.isNotEmpty()) {
@@ -228,19 +249,20 @@ class MeterAnalyzer(
                 lockedReading = detectedReading
                 lastSeenLockedTime = now
                 lockedFrameCount = 1
-                currentConfidence = Math.max(historyAgreement, 40f) // Start at 40% minimum
+                // Start higher with bonuses!
+                currentConfidence = Math.min(100f, 50f + validationBoost + fiveDigitBonus)
             } else if (normalizedDetected == normalizedLocked) {
                 // Same reading! Increase confidence FAST
                 lockedFrameCount++
                 lastSeenLockedTime = now  // Update last seen time!
                 
-                // Confidence grows quickly
-                val growth = CONFIDENCE_GROWTH_PER_FRAME * (1f - currentConfidence / 120f)
-                currentConfidence = Math.min(100f, currentConfidence + growth)
+                // Confidence grows quickly - ADDITIVE growth
+                val baseGrowth = CONFIDENCE_GROWTH_PER_FRAME
+                currentConfidence = Math.min(100f, currentConfidence + baseGrowth + validationBoost/2)
                 
                 // History agreement boost
                 if (historyAgreement > currentConfidence) {
-                    currentConfidence = (currentConfidence * 0.6f + historyAgreement * 0.4f)
+                    currentConfidence = (currentConfidence + historyAgreement) / 2f
                 }
             }
         }
@@ -269,8 +291,8 @@ class MeterAnalyzer(
             lastSeenLockedTime = now
             lockedFrameCount = 1
             
-            // Start the new reading with reasonable confidence
-            currentConfidence = Math.max(currentConfidence, Math.max(historyAgreement, 35f))
+            // Start the new reading with bonuses!
+            currentConfidence = Math.min(100f, Math.max(currentConfidence, 45f) + validationBoost + fiveDigitBonus)
         }
         
         return currentConfidence
@@ -347,12 +369,19 @@ class MeterAnalyzer(
         }
         
         // Adjust confidence based on validation
+        // BOOST for valid readings, REDUCE for invalid
         val finalConfidence = when {
             validationResult == null -> confidence
-            validationResult.errorCode == ReadingValidator.ErrorCode.VALID -> confidence
-            validationResult.errorCode == ReadingValidator.ErrorCode.HIGH_USAGE_WARNING -> confidence * 0.8f
-            validationResult.isValid -> confidence * 0.9f
-            else -> confidence * 0.5f // Invalid readings get halved confidence
+            validationResult.errorCode == ReadingValidator.ErrorCode.VALID -> {
+                // VALID reading matching previous - BOOST!
+                Math.min(100f, confidence * 1.1f)  
+            }
+            validationResult.errorCode == ReadingValidator.ErrorCode.HIGH_USAGE_WARNING -> {
+                // High but plausible - slight boost
+                Math.min(100f, confidence * 1.05f)
+            }
+            validationResult.isValid -> confidence  // Other valid cases - keep as is
+            else -> confidence * 0.7f // Invalid readings get reduced confidence
         }
         
         val result = AnalyzerResult(
@@ -1244,8 +1273,6 @@ class MeterAnalyzer(
                         
                         if (votingResult.consensusReading != null) {
                             finalResult = votingResult.consensusReading
-                            // Use the HIGHER of smart confidence or voting confidence
-                            finalConfidence = Math.max(confidence, votingResult.confidence)
                             finalSource = when (votingResult.agreementLevel) {
                                 ReadingValidator.AgreementLevel.UNANIMOUS -> "V"  // Voted
                                 ReadingValidator.AgreementLevel.MAJORITY -> "V"
@@ -1254,11 +1281,28 @@ class MeterAnalyzer(
                             }
                             Log.d("MeterAnalyzer", "Voting result: ${votingResult.details}")
                             
-                            // If voting agrees with our lock, boost confidence further
+                            // === SYNC LOCK WITH VOTED RESULT ===
+                            // If voting agrees with our lock, boost confidence
+                            // If voting gives different result, UPDATE the lock to match!
                             if (ReadingValidator.areReadingsEquivalent(finalResult, lockedReading)) {
-                                // Voting confirmed our lock! Max confidence.
-                                currentConfidence = Math.min(100f, currentConfidence + 10f)
+                                // Voting confirmed our lock! Big boost!
+                                currentConfidence = Math.min(100f, currentConfidence + 15f)
+                                lockedFrameCount++
+                            } else {
+                                // Voting chose something different - sync lock to voted result
+                                lockedReading = finalResult
+                                lockedFrameCount = 1
+                                lastSeenLockedTime = System.currentTimeMillis()
+                                // But don't reset confidence too much if voting is strong
+                                if (votingResult.agreementLevel == ReadingValidator.AgreementLevel.UNANIMOUS) {
+                                    currentConfidence = 95f
+                                } else if (votingResult.agreementLevel == ReadingValidator.AgreementLevel.MAJORITY) {
+                                    currentConfidence = Math.max(currentConfidence, 80f)
+                                }
                             }
+                            
+                            // Final confidence is the HIGHER of smart confidence or voting
+                            finalConfidence = Math.max(currentConfidence, votingResult.confidence)
                         } else {
                             finalResult = bestReading
                             finalConfidence = confidence
@@ -1271,7 +1315,7 @@ class MeterAnalyzer(
                     }
                     
                     // Log for debugging
-                    Log.d("MeterAnalyzer", "Smart Confidence: locked='$lockedReading', frames=$lockedFrameCount, conf=$currentConfidence -> emit '$finalResult' @ $finalConfidence%")
+                    Log.d("MeterAnalyzer", "EMIT: locked='$lockedReading', frames=$lockedFrameCount, currentConf=$currentConfidence, emitConf=$finalConfidence, result='$finalResult', src=$finalSource")
 
                     emitResult(finalResult, finalConfidence, allRects, acceptedRects, imageWidth, imageHeight, finalSource)
                 }

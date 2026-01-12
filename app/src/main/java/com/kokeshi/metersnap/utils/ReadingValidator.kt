@@ -365,11 +365,23 @@ object ReadingValidator {
         val normalizedValues = readings.map { it.second }.distinct()
         if (normalizedValues.size == 1 && readings.size >= 2) {
             // All agree! Return formatted version (with leading zeros)
+            val formatted = formatReading(normalizedValues.first())
+            
+            // BOOST if valid against previous reading!
+            val validation = validateReading(formatted, previousReading)
+            val baseConfidence = if (validation.isValid && validation.errorCode == ErrorCode.VALID) {
+                100f  // Perfect!
+            } else if (validation.isValid) {
+                95f   // Valid but high usage
+            } else {
+                90f   // All detectors agree but doesn't match previous - still trust it
+            }
+            
             return VotingResult(
-                consensusReading = formatReading(normalizedValues.first()),
-                confidence = 100f,
+                consensusReading = formatted,
+                confidence = baseConfidence,
                 agreementLevel = AgreementLevel.UNANIMOUS,
-                details = "All ${readings.size} detectors agree: ${formatReading(normalizedValues.first())}"
+                details = "All ${readings.size} detectors agree: $formatted"
             )
         }
         
@@ -378,11 +390,23 @@ object ReadingValidator {
         val majority = frequencyMap.filter { it.value >= 2 }.maxByOrNull { it.value }
         if (majority != null) {
             val agreers = readings.filter { it.second == majority.key }.map { it.first }
+            val formatted = formatReading(majority.key)
+            
+            // BOOST if valid against previous reading!
+            val validation = validateReading(formatted, previousReading)
+            val baseConfidence = if (validation.isValid && validation.errorCode == ErrorCode.VALID) {
+                95f  // Majority + valid = very confident!
+            } else if (validation.isValid) {
+                90f  // Majority + high usage warning
+            } else {
+                80f  // Majority agree but doesn't validate
+            }
+            
             return VotingResult(
-                consensusReading = formatReading(majority.key),
-                confidence = 85f,
+                consensusReading = formatted,
+                confidence = baseConfidence,
                 agreementLevel = AgreementLevel.MAJORITY,
-                details = "Majority: ${agreers.joinToString(" & ")} agree on ${formatReading(majority.key)}"
+                details = "Majority: ${agreers.joinToString(" & ")} agree on $formatted"
             )
         }
         
@@ -405,9 +429,19 @@ object ReadingValidator {
                 val winner = validatedCandidates.maxByOrNull { it.second.confidence }?.first
                     ?: formatReading(bestPrefix.value.first().second.second)
                 
+                // BOOST if valid against previous reading!
+                val validation = validateReading(winner, previousReading)
+                val baseConfidence = if (validation.isValid && validation.errorCode == ErrorCode.VALID) {
+                    90f  // Prefix match + valid
+                } else if (validation.isValid) {
+                    85f  // Prefix match + high usage
+                } else {
+                    70f  // Prefix match but doesn't validate
+                }
+                
                 return VotingResult(
                     consensusReading = winner,
-                    confidence = 75f,
+                    confidence = baseConfidence,
                     agreementLevel = AgreementLevel.PREFIX_MATCH,
                     details = "Prefix match (${bestPrefix.key}****), selected: $winner"
                 )
@@ -423,9 +457,17 @@ object ReadingValidator {
         
         if (validatedReadings.isNotEmpty()) {
             val best = validatedReadings.maxByOrNull { it.third.confidence }!!
+            
+            // Even with no consensus, if it validates, give decent confidence
+            val baseConfidence = if (best.third.errorCode == ErrorCode.VALID) {
+                75f  // No consensus but validates perfectly
+            } else {
+                60f  // No consensus, validates with warning
+            }
+            
             return VotingResult(
                 consensusReading = best.second,
-                confidence = 50f,
+                confidence = baseConfidence,
                 agreementLevel = AgreementLevel.NO_CONSENSUS,
                 details = "No consensus. Using ${best.first}'s reading (${best.second}) as it passed validation."
             )
