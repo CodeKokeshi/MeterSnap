@@ -413,39 +413,31 @@ class MeterAnalyzer(
             reading
         }
         
-        // Adjust confidence based on validation
-        // SIMPLE RULE: If reading is VALID and we're confident in detection, go to 100%
-        // If reading is INVALID (below previous), cap at 50%
-        val detectedValue = reading.toIntOrNull() ?: 0
+        // === DEAD SIMPLE CONFIDENCE LOGIC ===
+        // 1. If we detected 5 digits AND it's valid (>= previous), give HIGH confidence
+        // 2. If it's below previous (impossible), give LOW confidence
+        // 3. That's it. No overthinking.
         
-        val finalConfidence = when {
-            // No validation possible (no previous reading)
-            validationResult == null -> confidence
-            
-            // VALID reading - BOOST to at least input confidence, maybe more
-            validationResult.isValid -> {
-                if (confidence >= 85f) {
-                    // High detection confidence + valid = 100%!
-                    100f
-                } else {
-                    // Boost valid readings
-                    Math.min(100f, confidence * 1.2f)
-                }
-            }
-            
-            // INVALID: Reading is BELOW previous (impossible!)
-            validationResult.errorCode == ReadingValidator.ErrorCode.READING_TOO_LOW -> {
-                // This is IMPOSSIBLE - meter can't go backwards
-                // But we still detected SOMETHING clearly, just wrong
-                Math.min(confidence, 40f)  // Cap at 40%
-            }
-            
-            // Other invalid cases - mild penalty
-            else -> Math.min(confidence, 70f)
+        val detectedValue = reading.toIntOrNull() ?: 0
+        val hasFiveDigits = reading.length == 5 || ReadingValidator.normalizeReading(reading).length >= 4
+        
+        val finalConfidence: Float
+        
+        if (validationResult == null) {
+            // No previous reading to compare - just use detection confidence
+            finalConfidence = if (hasFiveDigits && confidence >= 50f) 95f else confidence
+        } else if (validationResult.isValid) {
+            // VALID reading (>= previous) - HIGH CONFIDENCE!
+            finalConfidence = if (hasFiveDigits) 100f else Math.max(confidence, 90f)
+        } else if (validationResult.errorCode == ReadingValidator.ErrorCode.READING_TOO_LOW) {
+            // IMPOSSIBLE - meter went backwards - LOW confidence
+            finalConfidence = 30f
+        } else {
+            // Other issues - medium confidence
+            finalConfidence = Math.min(confidence, 60f)
         }
         
-        // Debug log
-        Log.d("MeterAnalyzer", "emitResult: reading='$finalReading', inConf=$confidence, outConf=$finalConfidence, validation=${validationResult?.errorCode}, prev=$previousReading")
+        Log.d("MeterAnalyzer", "emitResult SIMPLE: reading='$finalReading', valid=${validationResult?.isValid}, 5dig=$hasFiveDigits, prev=$previousReading -> $finalConfidence%")
         
         val result = AnalyzerResult(
             reading = finalReading,
@@ -1347,9 +1339,9 @@ class MeterAnalyzer(
                     cachedLenetResult = bestReading
                     
                     // If we have results from multiple detectors, vote before emitting
-                    val finalResult: String
-                    val finalSource: String
-                    val finalConfidence: Float
+                    var finalResult: String
+                    var finalSource: String
+                    var finalConfidence: Float
                     
                     if (cachedMLKitResult.isNotEmpty() || cachedHybridResult.isNotEmpty()) {
                         val votingResult = ReadingValidator.voteOnReading(
