@@ -72,6 +72,8 @@ class MeterAnalyzer(
     private var mlKitInProgress = false
     private var cachedMLKitResult = ""
     private var cachedMLKitRects = ArrayList<Rect>()
+    private var cachedMLKitTimestamp = 0L  // When MLKit last detected something
+    private val MLKIT_CACHE_EXPIRY_MS = 500L  // MLKit result expires after 500ms
     private var firstGlimpseTime = 0L
     
     // MSER Instance (Reused to avoid memory leaks)
@@ -157,6 +159,7 @@ class MeterAnalyzer(
         firstGlimpseTime = 0L
         cachedMLKitResult = ""
         cachedMLKitRects.clear()
+        cachedMLKitTimestamp = 0L  // Clear MLKit cache timestamp
         cachedLenetResult = ""
         cachedHybridResult = ""
         failureTracker.reset()
@@ -467,6 +470,7 @@ class MeterAnalyzer(
                                 if (bestText.isNotEmpty()) {
                                     cachedMLKitResult = bestText
                                     cachedMLKitRects = newRects
+                                    cachedMLKitTimestamp = System.currentTimeMillis()  // Timestamp when MLKit detected
                                 }
                                 mlKitInProgress = false
                             }
@@ -942,6 +946,17 @@ class MeterAnalyzer(
             
             val timeSinceGlimpse = System.currentTimeMillis() - firstGlimpseTime
             val isTakingTooLong = firstGlimpseTime > 0 && timeSinceGlimpse > 2000 // 2 seconds timeout
+
+            // === MLKIT CACHE EXPIRY ===
+            // If MLKit result is stale (older than 500ms), clear it!
+            // This prevents "stuck" readings when camera moves away
+            val now = System.currentTimeMillis()
+            if (cachedMLKitResult.isNotEmpty() && (now - cachedMLKitTimestamp) > MLKIT_CACHE_EXPIRY_MS) {
+                Log.d("MeterAnalyzer", "MLKit cache expired: '$cachedMLKitResult' (age: ${now - cachedMLKitTimestamp}ms)")
+                cachedMLKitResult = ""
+                cachedMLKitRects.clear()
+                cachedMLKitTimestamp = 0L
+            }
 
             // --- INTEGRATION: ML KIT "JUDGE" ---
             if (cachedMLKitResult.isNotEmpty()) {
