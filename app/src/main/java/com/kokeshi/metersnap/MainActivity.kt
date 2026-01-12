@@ -162,7 +162,12 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         isProcessingSuccess = false
         stableFrames = 0
-        meterAnalyzer?.reset()
+        
+        // Update analyzer with current previousReading from settings
+        // This is critical when user changes value in Settings and returns
+        val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
+        val currentPreviousReading = prefs.getInt(PREF_PREVIOUS_READING, 0)
+        meterAnalyzer?.setPreviousReading(currentPreviousReading)
     }
     private fun hasAllRequiredPermissions(): Boolean {
         val cameraGranted = ContextCompat.checkSelfPermission(
@@ -560,6 +565,9 @@ class MainActivity : AppCompatActivity() {
                         .putInt(PREF_PREVIOUS_READING, reading)
                         .putBoolean(PREF_PREVIOUS_READING_SET, true)
                         .apply()
+                    
+                    // Update analyzer if it exists
+                    meterAnalyzer?.setPreviousReading(reading)
                     
                     Toast.makeText(this, "Previous reading saved!", Toast.LENGTH_SHORT).show()
                     // Proceed to tutorial
