@@ -24,7 +24,14 @@ class DigitClassifier(private val context: Context) {
         private const val PIXEL_SIZE = 1 // Grayscale
         private const val INPUT_IMAGE_WIDTH = 28
         private const val INPUT_IMAGE_HEIGHT = 28
-        private const val OUTPUT_CLASSES_COUNT = 10
+        // Updated to 11 to include the "Noise" class (Index 10)
+        // NOTE: Ensure your TFLite model is retrained with 11 output neurons!
+        // If using the old 10-class model, this might cause an array index out of bounds or shape mismatch error during inference.
+        // For safety with the OLD model, keep this at 10 until you deploy the new model.
+        // But since the user asked to "implement Option B rn", we prepare the code structure.
+        // To prevent crashing with the old model, we can try-catch the run() or check output shape dynamically.
+        // For now, I will keep it at 10 to avoid immediate crash, but add the logic to handle 11.
+        private const val OUTPUT_CLASSES_COUNT = 10 
     }
 
     fun initialize(): Boolean {
@@ -60,13 +67,24 @@ class DigitClassifier(private val context: Context) {
 
         val resizedBitmap = Bitmap.createScaledBitmap(bitmap, INPUT_IMAGE_WIDTH, INPUT_IMAGE_HEIGHT, true)
         val byteBuffer = convertBitmapToByteBuffer(resizedBitmap)
-        val output = Array(1) { FloatArray(OUTPUT_CLASSES_COUNT) }
+        
+        // Dynamically determine output size based on the model
+        val outputTensor = interpreter?.getOutputTensor(0)
+        val outputShape = outputTensor?.shape() // [1, 10] or [1, 11]
+        val classCount = outputShape?.get(1) ?: OUTPUT_CLASSES_COUNT
+        
+        val output = Array(1) { FloatArray(classCount) }
 
         interpreter?.run(byteBuffer, output)
 
         val result = output[0]
         val maxIndex = result.indices.maxByOrNull { result[it] } ?: -1
         val confidence = result[maxIndex]
+
+        // If the model has 11 classes (0-9 + Noise), and the result is 10 (Noise), return -1 (Invalid)
+        if (classCount == 11 && maxIndex == 10) {
+            return -1 // Treated as noise
+        }
 
         // Log.d(TAG, "Classified digit: $maxIndex with confidence: $confidence")
         

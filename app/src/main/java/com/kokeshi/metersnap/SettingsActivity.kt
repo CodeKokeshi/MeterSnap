@@ -34,6 +34,8 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var btnEditCustomRates: Button
     private lateinit var btnSaveSettings: Button
     private lateinit var textRatesSubtitle: TextView
+    private lateinit var textPreviousReading: TextView
+    private lateinit var btnEditPreviousReading: Button
 
     private lateinit var ratePreferences: RatePreferences
     private var customRates: MutableList<TierRate> = mutableListOf()
@@ -93,6 +95,8 @@ class SettingsActivity : AppCompatActivity() {
         btnEditCustomRates = findViewById(R.id.btn_edit_custom_rates)
         btnSaveSettings = findViewById(R.id.btn_save_settings)
         textRatesSubtitle = findViewById(R.id.text_rates_subtitle)
+        textPreviousReading = findViewById(R.id.text_previous_reading)
+        btnEditPreviousReading = findViewById(R.id.btn_edit_previous_reading)
         
         // Setup spinner adapter
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, rateTypes)
@@ -120,6 +124,15 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun loadSavedSettings() {
+        // Load Previous Reading
+        val prefs = getSharedPreferences("MeterSnapPrefs", android.content.Context.MODE_PRIVATE)
+        val previousReading = prefs.getInt("previous_reading", -1)
+        if (previousReading != -1) {
+            textPreviousReading.text = previousReading.toString()
+        } else {
+            textPreviousReading.text = "Not Set"
+        }
+
         // Load rate type
         val savedType = ratePreferences.getRateType()
         val position = when (savedType) {
@@ -184,6 +197,10 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
+        btnEditPreviousReading.setOnClickListener {
+            showPreviousReadingDialog()
+        }
+
         spinnerRateType.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 when (position) {
@@ -437,6 +454,53 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         dialog.show()
+    }
+
+    private fun showPreviousReadingDialog() {
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("Edit Previous Reading")
+        builder.setMessage("Enter the reading from your last water bill.")
+
+        val input = android.widget.EditText(this)
+        input.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        val container = android.widget.FrameLayout(this)
+        val params = android.widget.FrameLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        val margin = (16 * resources.displayMetrics.density).toInt()
+        params.leftMargin = margin
+        params.rightMargin = margin
+        input.layoutParams = params
+        container.addView(input)
+        builder.setView(container)
+
+        // Pre-fill
+        val currentText = textPreviousReading.text.toString()
+        if (currentText != "Not Set") {
+            input.setText(currentText)
+        }
+
+        builder.setPositiveButton("Save") { dialog, _ ->
+            val text = input.text.toString()
+            if (text.isNotEmpty()) {
+                val reading = text.toIntOrNull()
+                if (reading != null) {
+                    val prefs = getSharedPreferences("MeterSnapPrefs", android.content.Context.MODE_PRIVATE)
+                    prefs.edit()
+                        .putInt("previous_reading", reading)
+                        .putBoolean("previous_reading_set", true)
+                        .apply()
+                    
+                    textPreviousReading.text = reading.toString()
+                    Toast.makeText(this, "Previous reading updated!", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "Invalid number", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        builder.setNegativeButton("Cancel", null)
+        builder.show()
     }
 
     private fun saveSettings() {

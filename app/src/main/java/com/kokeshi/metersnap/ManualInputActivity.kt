@@ -1,5 +1,6 @@
 package com.kokeshi.metersnap
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
@@ -29,6 +30,13 @@ class ManualInputActivity : AppCompatActivity() {
         initializeViews()
         setupToolbar()
         setupListeners()
+        
+        // Auto-populate previous reading
+        val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
+        val previousReading = prefs.getInt("previous_reading", -1)
+        if (previousReading != -1) {
+            editPreviousReading.setText(previousReading.toString())
+        }
     }
 
     private fun initializeViews() {

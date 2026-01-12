@@ -46,11 +46,11 @@ class TutorialOverlay @JvmOverloads constructor(
             arrowDirection = ArrowDirection.DOWN_RIGHT
         ),
         TutorialStep(
-            text = "Access settings to configure water rates, calculation methods, and customize your billing preferences.",
+            text = "Access settings to update your Previous Reading, configure water rates, and customize billing preferences.",
             arrowDirection = ArrowDirection.DOWN_LEFT
         ),
         TutorialStep(
-            text = "Point your camera at the water meter and tap the capture button. The app will automatically read the numbers.",
+            text = "Point your camera at the water meter. Hold steady when the confidence hits 100% to automatically calculate your bill.",
             arrowDirection = ArrowDirection.UP
         )
     )
