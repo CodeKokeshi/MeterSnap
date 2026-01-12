@@ -96,6 +96,40 @@ class MeterAnalyzer(
     
     // Cached Hybrid result (MLKit localization + LeNet classification)
     private var cachedHybridResult = ""
+    
+    // === SMART CONFIDENCE SYSTEM ===
+    // The "locked in" reading we're confident about (normalized)
+    private var lockedReading = ""
+    
+    // How many consecutive frames we've seen the locked reading
+    private var lockedFrameCount = 0
+    
+    // The current confidence level (0-100) - with momentum
+    private var currentConfidence = 0f
+    
+    // Timestamp when we first locked onto this reading
+    private var lockStartTime = 0L
+    
+    // Confidence thresholds
+    companion object {
+        // Once we hit this confidence, we "lock in" and resist changes
+        const val LOCK_IN_THRESHOLD = 85f
+        
+        // Minimum frames needed before we consider locking
+        const val MIN_FRAMES_TO_LOCK = 3
+        
+        // How fast confidence grows per consistent frame (additive)
+        const val CONFIDENCE_GROWTH_PER_FRAME = 8f
+        
+        // How fast confidence decays when we see different readings (multiplicative)
+        const val CONFIDENCE_DECAY_FACTOR = 0.7f
+        
+        // Minimum confidence floor when locked (doesn't drop below this easily)
+        const val LOCKED_CONFIDENCE_FLOOR = 75f
+        
+        // Maximum time (ms) to hold a lock without seeing the reading
+        const val MAX_LOCK_HOLD_TIME = 2000L
+    }
 
     var captureDebugNextFrame = false
     
@@ -117,6 +151,102 @@ class MeterAnalyzer(
         cachedLenetResult = ""
         cachedHybridResult = ""
         failureTracker.reset()
+        // Reset smart confidence
+        lockedReading = ""
+        lockedFrameCount = 0
+        currentConfidence = 0f
+        lockStartTime = 0L
+    }
+    
+    /**
+     * Smart confidence calculation that considers:
+     * 1. How many frames we've seen this reading (temporal persistence)
+     * 2. Previous confidence level (momentum)
+     * 3. Lock-in behavior (resistance to noise once confident)
+     * 
+     * @param detectedReading The normalized reading from this frame
+     * @param historyAgreement What percentage of history buffer agrees (0-100)
+     * @return The smart confidence level (0-100)
+     */
+    private fun calculateSmartConfidence(detectedReading: String, historyAgreement: Float): Float {
+        val normalizedDetected = ReadingValidator.normalizeReading(detectedReading)
+        val normalizedLocked = ReadingValidator.normalizeReading(lockedReading)
+        val now = System.currentTimeMillis()
+        
+        // Case 1: Same reading as our lock (or we have no lock yet)
+        if (normalizedDetected == normalizedLocked || lockedReading.isEmpty()) {
+            if (lockedReading.isEmpty() && normalizedDetected.isNotEmpty()) {
+                // First time seeing a valid reading - start tracking
+                lockedReading = detectedReading
+                lockStartTime = now
+                lockedFrameCount = 1
+                currentConfidence = Math.max(historyAgreement, 30f) // Start at history agreement or 30%
+            } else if (normalizedDetected == normalizedLocked) {
+                // Same reading! Increase confidence
+                lockedFrameCount++
+                
+                // Confidence grows based on consecutive frames
+                // Fast initial growth, then slower as we approach 100%
+                val growth = CONFIDENCE_GROWTH_PER_FRAME * (1f - currentConfidence / 150f)
+                currentConfidence = Math.min(100f, currentConfidence + growth)
+                
+                // Also consider history agreement as a boost
+                if (historyAgreement > currentConfidence) {
+                    currentConfidence = (currentConfidence + historyAgreement) / 2f
+                }
+            }
+        }
+        // Case 2: DIFFERENT reading detected
+        else {
+            val timeSinceLock = now - lockStartTime
+            
+            // If we're locked in (high confidence), resist the change
+            if (currentConfidence >= LOCK_IN_THRESHOLD && lockedFrameCount >= MIN_FRAMES_TO_LOCK) {
+                // Check if the lock is still fresh (not timed out)
+                if (timeSinceLock < MAX_LOCK_HOLD_TIME) {
+                    // Slightly decay confidence but don't abandon the lock easily
+                    currentConfidence = Math.max(LOCKED_CONFIDENCE_FLOOR, currentConfidence * 0.95f)
+                    Log.d("MeterAnalyzer", "Lock holding: '$lockedReading' (confidence: $currentConfidence), ignoring '$normalizedDetected'")
+                    // Return our locked reading's confidence, not the new one
+                    return currentConfidence
+                }
+            }
+            
+            // Not locked, or lock expired - consider switching
+            // Decay confidence significantly
+            currentConfidence *= CONFIDENCE_DECAY_FACTOR
+            
+            // If confidence dropped low enough, switch to the new reading
+            if (currentConfidence < 40f || lockedFrameCount < MIN_FRAMES_TO_LOCK) {
+                Log.d("MeterAnalyzer", "Switching lock: '$lockedReading' -> '$normalizedDetected'")
+                lockedReading = detectedReading
+                lockStartTime = now
+                lockedFrameCount = 1
+                currentConfidence = Math.max(historyAgreement, 30f)
+            }
+        }
+        
+        return currentConfidence
+    }
+    
+    /**
+     * Gets the current best reading (might be the locked one, not the latest frame)
+     */
+    private fun getBestReading(frameReading: String): String {
+        val normalizedFrame = ReadingValidator.normalizeReading(frameReading)
+        val normalizedLocked = ReadingValidator.normalizeReading(lockedReading)
+        
+        // If we're locked with high confidence, prefer the locked reading
+        if (lockedReading.isNotEmpty() && 
+            currentConfidence >= LOCK_IN_THRESHOLD && 
+            lockedFrameCount >= MIN_FRAMES_TO_LOCK &&
+            normalizedFrame != normalizedLocked) {
+            
+            Log.d("MeterAnalyzer", "Using locked reading '$lockedReading' instead of frame '$frameReading'")
+            return ReadingValidator.formatReading(lockedReading)
+        }
+        
+        return ReadingValidator.formatReading(frameReading)
     }
     
     /**
@@ -779,6 +909,13 @@ class MeterAnalyzer(
                         // Cache results for voting
                         cachedLenetResult = formattedResult
                         cachedHybridResult = formattedResult
+                        
+                        // === SMART CONFIDENCE: Lock in immediately with max confidence ===
+                        lockedReading = formattedResult
+                        lockedFrameCount = historySize // Treat as if we've seen it many times
+                        currentConfidence = 100f
+                        lockStartTime = System.currentTimeMillis()
+                        
                         // Mark as Hybrid success with validation
                         emitResult(formattedResult, 100f, allRects, acceptedRects, imageWidth, imageHeight, "H")
                         mat.release()
@@ -819,11 +956,17 @@ class MeterAnalyzer(
                             previousReading = previousReading
                         )
                         
-                        val finalReading = votingResult.consensusReading ?: currentResult
+                        val finalReading = ReadingValidator.formatReading(votingResult.consensusReading ?: currentResult)
                         val sourceTag = if (votingResult.agreementLevel == ReadingValidator.AgreementLevel.UNANIMOUS ||
                                            votingResult.agreementLevel == ReadingValidator.AgreementLevel.MAJORITY) "V" else "M"
                         
-                        emitResult(finalReading, votingResult.confidence, allRects, acceptedRects, imageWidth, imageHeight, sourceTag)
+                        // === SMART CONFIDENCE: Lock in the MLKit result ===
+                        lockedReading = finalReading
+                        lockedFrameCount = historySize
+                        currentConfidence = Math.max(votingResult.confidence, 90f)
+                        lockStartTime = System.currentTimeMillis()
+                        
+                        emitResult(finalReading, currentConfidence, allRects, acceptedRects, imageWidth, imageHeight, sourceTag)
                         mat.release()
                         croppedMat.release()
                         gray.release()
@@ -994,24 +1137,22 @@ class MeterAnalyzer(
                     // Format the result properly (with leading zeros)
                     val formattedResult = ReadingValidator.formatReading(mostFrequent.key)
                     
-                    // Boost confidence calculation
-                    // If we have 3/5 agreement, that's 60%. But for UI "snappiness", we can boost it.
-                    // If we have 3 consecutive identical results (normalized), we should treat it as high confidence.
+                    // === SMART CONFIDENCE SYSTEM ===
+                    // Calculate base history agreement (old method)
+                    val historyAgreement = (mostFrequent.value.toFloat() / resultHistory.size) * 100
                     
-                    var confidence = (mostFrequent.value.toFloat() / resultHistory.size) * 100
+                    // Calculate SMART confidence (with temporal persistence & momentum)
+                    var confidence = calculateSmartConfidence(formattedResult, historyAgreement)
                     
-                    // Bonus for recent consistency (using normalized comparison)
-                    val lastThreeNormalized = resultHistory.takeLast(3).map { ReadingValidator.normalizeReading(it) }
-                    if (resultHistory.size >= 3 && lastThreeNormalized.distinct().size == 1) {
-                        confidence = Math.max(confidence, 90f) // Boost to 90% if last 3 frames agree
-                    }
+                    // Get the best reading (might be locked reading if we're confident)
+                    val bestReading = getBestReading(formattedResult)
 
                     // --- 4-DIGIT TRAP ---
                     // If we are stuck on 4 digits (e.g. 0161) and ML Kit isn't helping,
                     // we must NOT submit this as a success. It's a partial read.
                     // Check the NORMALIZED length (without leading zeros)
-                    val normalizedLength = mostFrequent.key.length
-                    if (normalizedLength == 4 && mostFrequent.key.toIntOrNull() ?: 0 >= 1000) {
+                    val normalizedLength = ReadingValidator.normalizeReading(bestReading).length
+                    if (normalizedLength == 4 && ReadingValidator.normalizeReading(bestReading).toIntOrNull() ?: 0 >= 1000) {
                         // It's actually a 4-digit number (1000-9999), not a 5-digit with leading zero
                         // Cap confidence at 85% so it never triggers "Hold Steady" (which needs 90%)
                         // This forces the user to keep adjusting until we find the 5th digit.
@@ -1020,7 +1161,7 @@ class MeterAnalyzer(
                     
                     // === DECISION ALGORITHM: FINAL VOTING ===
                     // Cache the LeNet result for voting (use formatted version)
-                    cachedLenetResult = formattedResult
+                    cachedLenetResult = bestReading
                     
                     // If we have results from multiple detectors, vote before emitting
                     val finalResult: String
@@ -1037,6 +1178,7 @@ class MeterAnalyzer(
                         
                         if (votingResult.consensusReading != null) {
                             finalResult = votingResult.consensusReading
+                            // Use the HIGHER of smart confidence or voting confidence
                             finalConfidence = Math.max(confidence, votingResult.confidence)
                             finalSource = when (votingResult.agreementLevel) {
                                 ReadingValidator.AgreementLevel.UNANIMOUS -> "V"  // Voted
@@ -1045,22 +1187,34 @@ class MeterAnalyzer(
                                 else -> "L" // Fallback to LeNet
                             }
                             Log.d("MeterAnalyzer", "Voting result: ${votingResult.details}")
+                            
+                            // If voting agrees with our lock, boost confidence further
+                            if (ReadingValidator.areReadingsEquivalent(finalResult, lockedReading)) {
+                                // Voting confirmed our lock! Max confidence.
+                                currentConfidence = Math.min(100f, currentConfidence + 10f)
+                            }
                         } else {
-                            finalResult = formattedResult
+                            finalResult = bestReading
                             finalConfidence = confidence
                             finalSource = "L"
                         }
                     } else {
-                        finalResult = formattedResult
+                        finalResult = bestReading
                         finalConfidence = confidence
                         finalSource = "L"
                     }
+                    
+                    // Log for debugging
+                    Log.d("MeterAnalyzer", "Smart Confidence: locked='$lockedReading', frames=$lockedFrameCount, conf=$currentConfidence -> emit '$finalResult' @ $finalConfidence%")
 
                     emitResult(finalResult, finalConfidence, allRects, acceptedRects, imageWidth, imageHeight, finalSource)
                 }
             } else {
-                 // Pass empty/current if no history yet
-                 emitResult(normalizedResult, 0f, allRects, acceptedRects, imageWidth, imageHeight, "L")
+                 // Pass empty/current if no history yet - also update smart confidence
+                 if (normalizedResult.isNotEmpty()) {
+                     calculateSmartConfidence(normalizedResult, 0f)
+                 }
+                 emitResult(normalizedResult, currentConfidence, allRects, acceptedRects, imageWidth, imageHeight, "L")
             }
 
             // Cleanup
