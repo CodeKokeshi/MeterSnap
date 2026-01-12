@@ -93,6 +93,10 @@ class MeterAnalyzer(
     // Failure tracker for suggesting manual input
     private val failureTracker = ReadingValidator.FailureTracker()
     
+    // === PREDICTION ENGINE ===
+    // Intelligent predictor that accumulates observations and predicts reading
+    private val readingPredictor = ReadingValidator.ReadingPredictor()
+    
     // Cached LeNet result for voting
     private var cachedLenetResult = ""
     
@@ -163,6 +167,7 @@ class MeterAnalyzer(
         cachedLenetResult = ""
         cachedHybridResult = ""
         failureTracker.reset()
+        readingPredictor.reset()  // Reset prediction engine
         // Reset smart confidence
         lockedReading = ""
         lockedFrameCount = 0
@@ -222,25 +227,49 @@ class MeterAnalyzer(
         // Reset the "no valid reading" counter since we have something
         framesSinceValidReading = 0
         
+        // === GET PREDICTION FROM PREDICTOR ===
+        // This is the BRAIN - it combines all observations and previous reading
+        val prediction = readingPredictor.predict(previousReading)
+        val predictedReading = ReadingValidator.normalizeReading(prediction.predictedReading)
+        
+        // === PREDICTION AGREEMENT BOOST ===
+        // If current detection matches what the predictor thinks, HUGE boost!
+        var predictionBoost = 0f
+        if (predictedReading.isNotEmpty() && normalizedDetected == predictedReading) {
+            predictionBoost = 20f  // Detection matches prediction!
+            Log.d("MeterAnalyzer", "PREDICTION MATCH! '$normalizedDetected' = predicted '$predictedReading' (+$predictionBoost%)")
+        }
+        
+        // === VALIDITY CHECK ===
+        // If reading is BELOW previous reading, it's almost certainly wrong
+        val detectedValue = normalizedDetected.toIntOrNull() ?: 0
+        val isBelowPrevious = previousReading > 0 && detectedValue < previousReading && detectedValue > 0
+        if (isBelowPrevious) {
+            // This reading is IMPOSSIBLE (meter can't go backwards)
+            Log.d("MeterAnalyzer", "INVALID: $detectedValue < previous $previousReading - low confidence")
+            currentConfidence = Math.min(currentConfidence, 30f)  // Cap at 30%
+            return currentConfidence
+        }
+        
         // === VALIDATION BOOST ===
         // If this reading makes sense given the previous reading, BOOST confidence!
         var validationBoost = 0f
         if (previousReading > 0 && normalizedDetected.length >= 4) {
             val validationResult = ReadingValidator.validateReading(detectedReading, previousReading)
             if (validationResult.isValid) {
-                // Valid reading! Big confidence boost
                 validationBoost = if (validationResult.errorCode == ReadingValidator.ErrorCode.VALID) {
                     25f  // Perfect - reasonable usage
                 } else {
                     15f  // High usage warning but still valid
                 }
-                Log.d("MeterAnalyzer", "Validation BOOST: +${validationBoost.toInt()}% (previous=$previousReading, detected=$normalizedDetected)")
             }
         }
         
         // === 5-DIGIT BONUS ===
-        // If we detected exactly 5 digits, that's already a strong signal!
         val fiveDigitBonus = if (normalizedDetected.length == 5) 15f else 0f
+        
+        // === TOTAL BONUS ===
+        val totalBonus = predictionBoost + validationBoost + fiveDigitBonus
         
         // Case 1: Same reading as our lock (or we have no lock yet)
         if (normalizedDetected == normalizedLocked || lockedReading.isEmpty()) {
@@ -249,16 +278,19 @@ class MeterAnalyzer(
                 lockedReading = detectedReading
                 lastSeenLockedTime = now
                 lockedFrameCount = 1
-                // Start higher with bonuses!
-                currentConfidence = Math.min(100f, 50f + validationBoost + fiveDigitBonus)
+                // Start with predictor confidence or base + bonuses
+                currentConfidence = Math.max(
+                    prediction.confidence,
+                    Math.min(100f, 50f + totalBonus)
+                )
             } else if (normalizedDetected == normalizedLocked) {
                 // Same reading! Increase confidence FAST
                 lockedFrameCount++
-                lastSeenLockedTime = now  // Update last seen time!
+                lastSeenLockedTime = now
                 
-                // Confidence grows quickly - ADDITIVE growth
-                val baseGrowth = CONFIDENCE_GROWTH_PER_FRAME
-                currentConfidence = Math.min(100f, currentConfidence + baseGrowth + validationBoost/2)
+                // Use HIGHER of: growth formula OR predictor confidence
+                val growthConfidence = Math.min(100f, currentConfidence + CONFIDENCE_GROWTH_PER_FRAME + totalBonus/3)
+                currentConfidence = Math.max(growthConfidence, prediction.confidence)
                 
                 // History agreement boost
                 if (historyAgreement > currentConfidence) {
@@ -270,11 +302,21 @@ class MeterAnalyzer(
         else {
             val timeSinceSeen = now - lastSeenLockedTime
             
+            // === PREDICTOR OVERRIDE ===
+            // If predictor strongly suggests a different reading than our lock, consider switching!
+            if (prediction.confidence > 80f && predictedReading != normalizedLocked && predictedReading == normalizedDetected) {
+                Log.d("MeterAnalyzer", "Predictor override: '$normalizedLocked' -> '$predictedReading' (predictor conf: ${prediction.confidence.toInt()}%)")
+                lockedReading = detectedReading
+                lastSeenLockedTime = now
+                lockedFrameCount = 1
+                currentConfidence = prediction.confidence
+                return currentConfidence
+            }
+            
             // If we're locked in AND we just saw it recently, resist briefly
             if (currentConfidence >= LOCK_IN_THRESHOLD && 
                 lockedFrameCount >= MIN_FRAMES_TO_LOCK &&
                 timeSinceSeen < MAX_LOCK_HOLD_TIME) {
-                // Decay confidence but hold the lock
                 currentConfidence = Math.max(LOCKED_CONFIDENCE_FLOOR, currentConfidence * 0.9f)
                 Log.d("MeterAnalyzer", "Lock holding: '$lockedReading' (conf: ${currentConfidence.toInt()}%), saw '$normalizedDetected'")
                 return currentConfidence
@@ -283,17 +325,20 @@ class MeterAnalyzer(
             // Lock expired or not strong enough - SWITCH to new reading
             Log.d("MeterAnalyzer", "Switching: '$lockedReading' -> '$normalizedDetected' (old conf: ${currentConfidence.toInt()}%)")
             
-            // Decay the old confidence
             currentConfidence *= CONFIDENCE_DECAY_FACTOR
-            
-            // Switch to new reading
             lockedReading = detectedReading
             lastSeenLockedTime = now
             lockedFrameCount = 1
             
-            // Start the new reading with bonuses!
-            currentConfidence = Math.min(100f, Math.max(currentConfidence, 45f) + validationBoost + fiveDigitBonus)
+            // Start with predictor confidence or calculated confidence
+            currentConfidence = Math.max(
+                currentConfidence,
+                Math.max(prediction.confidence, Math.min(100f, 45f + totalBonus))
+            )
         }
+        
+        // Final log
+        Log.d("MeterAnalyzer", "SmartConf: detected='$normalizedDetected', predicted='$predictedReading', predConf=${prediction.confidence.toInt()}%, finalConf=${currentConfidence.toInt()}%")
         
         return currentConfidence
     }
@@ -1205,6 +1250,19 @@ class MeterAnalyzer(
                 currentResult
             }
             
+            // === RECORD OBSERVATION TO PREDICTOR ===
+            // Every valid detection (3+ digits) gets recorded for prediction
+            if (normalizedResult.isNotEmpty() && normalizedResult.length >= 3) {
+                readingPredictor.recordObservation(normalizedResult)
+            }
+            // Also record MLKit and Hybrid if available
+            if (cachedMLKitResult.isNotEmpty() && cachedMLKitResult.length >= 3) {
+                readingPredictor.recordObservation(cachedMLKitResult)
+            }
+            if (cachedHybridResult.isNotEmpty() && cachedHybridResult.length >= 3) {
+                readingPredictor.recordObservation(cachedHybridResult)
+            }
+            
             // Voting Logic - using NORMALIZED results
             if (normalizedResult.isNotEmpty() && normalizedResult.length >= 3) { // Only consider results with at least 3 digits
                 resultHistory.addLast(normalizedResult)
@@ -1314,10 +1372,31 @@ class MeterAnalyzer(
                         finalSource = "L"
                     }
                     
+                    // === PREDICTOR FINAL CHECK ===
+                    // If predictor is very confident about a reading, use its confidence
+                    val prediction = readingPredictor.predict(previousReading)
+                    if (prediction.predictedReading.isNotEmpty()) {
+                        val predictedNorm = ReadingValidator.normalizeReading(prediction.predictedReading)
+                        val finalNorm = ReadingValidator.normalizeReading(finalResult)
+                        
+                        if (predictedNorm == finalNorm && prediction.confidence > finalConfidence) {
+                            // Predictor agrees AND has higher confidence - use it!
+                            Log.d("MeterAnalyzer", "Predictor boost: ${finalConfidence.toInt()}% -> ${prediction.confidence.toInt()}% for '$finalResult'")
+                            // Use predictor confidence
+                            currentConfidence = prediction.confidence
+                        }
+                        
+                        // Log prediction stats
+                        Log.d("MeterAnalyzer", "Predictor: '${prediction.predictedReading}' @ ${prediction.confidence.toInt()}%, obs=${readingPredictor.getObservationCount()}, ${prediction.reason}")
+                    }
+                    
+                    // Use the higher of calculated confidence and predictor confidence
+                    val emitConfidence = Math.max(finalConfidence, if (ReadingValidator.normalizeReading(prediction.predictedReading) == ReadingValidator.normalizeReading(finalResult)) prediction.confidence else 0f)
+                    
                     // Log for debugging
-                    Log.d("MeterAnalyzer", "EMIT: locked='$lockedReading', frames=$lockedFrameCount, currentConf=$currentConfidence, emitConf=$finalConfidence, result='$finalResult', src=$finalSource")
+                    Log.d("MeterAnalyzer", "EMIT: locked='$lockedReading', frames=$lockedFrameCount, currentConf=$currentConfidence, emitConf=$emitConfidence, result='$finalResult', src=$finalSource")
 
-                    emitResult(finalResult, finalConfidence, allRects, acceptedRects, imageWidth, imageHeight, finalSource)
+                    emitResult(finalResult, emitConfidence, allRects, acceptedRects, imageWidth, imageHeight, finalSource)
                 }
             } else {
                  // Pass empty/current if no history yet - also handle decay

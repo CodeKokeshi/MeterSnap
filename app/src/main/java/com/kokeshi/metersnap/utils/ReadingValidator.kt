@@ -482,6 +482,264 @@ object ReadingValidator {
         )
     }
     
+    // ===== READING PREDICTOR =====
+    
+    /**
+     * Intelligent Reading Predictor
+     * 
+     * This class implements a prediction-based approach to meter reading:
+     * 1. Uses previous reading as a FLOOR - anything below is highly suspicious
+     * 2. Accumulates observations over time to build confidence
+     * 3. Analyzes digit-by-digit agreement across observations
+     * 4. Combines frequency, validity, and prediction for final confidence
+     * 
+     * The key insight: We're not just READING numbers, we're PREDICTING what
+     * the meter should show based on prior knowledge and observations.
+     */
+    class ReadingPredictor {
+        
+        // Observation frequency map: reading -> count
+        private val observations = mutableMapOf<String, Int>()
+        
+        // Per-digit observations: position -> (digit -> count)
+        private val digitObservations = Array(5) { mutableMapOf<Char, Int>() }
+        
+        // Total observations recorded
+        private var totalObservations = 0
+        
+        // Best prediction so far
+        private var currentPrediction: PredictionResult? = null
+        
+        companion object {
+            // Expected monthly usage range
+            const val TYPICAL_MIN_USAGE = 5    // Minimum realistic usage
+            const val TYPICAL_MAX_USAGE = 100  // Typical household max
+            const val PLAUSIBLE_MAX_USAGE = 500 // Plausible max (commercial)
+            
+            // Observation thresholds
+            const val MIN_OBSERVATIONS_FOR_PREDICTION = 2
+            const val STRONG_CONSENSUS_THRESHOLD = 0.6f  // 60% of observations agree
+        }
+        
+        data class PredictionResult(
+            val predictedReading: String,
+            val confidence: Float,          // 0-100
+            val digitConfidences: List<Float>,  // Confidence per digit
+            val reason: String,
+            val alternativeCandidates: List<Pair<String, Float>>  // Other possibilities
+        )
+        
+        /**
+         * Record a new observation from any detector.
+         * Normalizes and tracks both full reading and per-digit frequencies.
+         */
+        fun recordObservation(reading: String) {
+            val normalized = normalizeReading(reading)
+            if (normalized.isEmpty() || normalized.length < 3) return
+            
+            val formatted = formatReading(normalized)  // Always 5 digits
+            
+            // Track full reading
+            observations[formatted] = (observations[formatted] ?: 0) + 1
+            totalObservations++
+            
+            // Track per-digit
+            formatted.forEachIndexed { index, digit ->
+                digitObservations[index][digit] = (digitObservations[index][digit] ?: 0) + 1
+            }
+            
+            Log.d(TAG, "Observation recorded: $formatted (total: $totalObservations)")
+        }
+        
+        /**
+         * Get the predicted reading based on all accumulated observations
+         * and the previous reading constraint.
+         * 
+         * This is the BRAIN of the system - it combines:
+         * 1. Frequency of observations (what we've seen most)
+         * 2. Previous reading constraint (must be >= previous)
+         * 3. Plausibility scoring (expected usage range)
+         * 4. Per-digit confidence analysis
+         */
+        fun predict(previousReading: Int): PredictionResult {
+            if (observations.isEmpty()) {
+                return PredictionResult(
+                    predictedReading = "",
+                    confidence = 0f,
+                    digitConfidences = listOf(0f, 0f, 0f, 0f, 0f),
+                    reason = "No observations yet",
+                    alternativeCandidates = emptyList()
+                )
+            }
+            
+            // === STEP 1: Score all observed readings ===
+            val scoredReadings = observations.map { (reading, count) ->
+                val value = reading.toIntOrNull() ?: 0
+                
+                // Base score from frequency
+                val frequencyScore = count.toFloat() / totalObservations
+                
+                // Validity score based on previous reading
+                val validityScore = when {
+                    value < previousReading -> 0.1f  // Below previous = very suspicious
+                    value == previousReading -> 0.8f // Same as previous = possible (no usage)
+                    else -> 1.0f  // Above previous = valid
+                }
+                
+                // Plausibility score based on expected usage
+                val usage = value - previousReading
+                val plausibilityScore = when {
+                    usage < 0 -> 0.1f  // Impossible (meter went backwards)
+                    usage == 0 -> 0.7f  // No usage - less common but valid
+                    usage in TYPICAL_MIN_USAGE..TYPICAL_MAX_USAGE -> 1.0f  // Sweet spot!
+                    usage in (TYPICAL_MAX_USAGE + 1)..PLAUSIBLE_MAX_USAGE -> 0.8f  // High but plausible
+                    usage > PLAUSIBLE_MAX_USAGE -> 0.3f  // Suspiciously high
+                    else -> 0.5f
+                }
+                
+                // Combined score: frequency * validity * plausibility
+                val totalScore = frequencyScore * validityScore * plausibilityScore
+                
+                reading to ScoredReading(
+                    reading = reading,
+                    count = count,
+                    frequencyScore = frequencyScore,
+                    validityScore = validityScore,
+                    plausibilityScore = plausibilityScore,
+                    totalScore = totalScore
+                )
+            }.sortedByDescending { it.second.totalScore }
+            
+            // === STEP 2: Calculate per-digit confidence ===
+            val digitConfidences = digitObservations.map { digitMap ->
+                if (digitMap.isEmpty()) return@map 0f
+                val total = digitMap.values.sum()
+                val maxCount = digitMap.values.maxOrNull() ?: 0
+                (maxCount.toFloat() / total) * 100f
+            }
+            
+            // === STEP 3: Construct best prediction ===
+            val bestCandidate = scoredReadings.firstOrNull()
+            
+            if (bestCandidate == null) {
+                return PredictionResult(
+                    predictedReading = "",
+                    confidence = 0f,
+                    digitConfidences = digitConfidences,
+                    reason = "No valid candidates",
+                    alternativeCandidates = emptyList()
+                )
+            }
+            
+            // === STEP 4: Calculate overall confidence ===
+            // Confidence is based on:
+            // - How dominant is the top candidate?
+            // - Is it valid against previous reading?
+            // - How consistent are the per-digit observations?
+            
+            val topScore = bestCandidate.second
+            val dominanceRatio = if (scoredReadings.size > 1) {
+                topScore.totalScore / (scoredReadings.sumOf { it.second.totalScore.toDouble() }).toFloat()
+            } else {
+                1.0f
+            }
+            
+            val avgDigitConfidence = digitConfidences.average().toFloat()
+            val minDigitConfidence = digitConfidences.minOrNull() ?: 0f
+            
+            // Final confidence formula:
+            // Base from dominance, boosted by digit agreement, capped by validity
+            var confidence = (dominanceRatio * 100f)
+                .coerceAtLeast(topScore.frequencyScore * 100f)  // At least as high as frequency
+            
+            // Boost for valid readings
+            if (topScore.validityScore >= 1.0f) {
+                confidence = (confidence * 1.2f).coerceAtMost(100f)  // 20% boost for valid
+            }
+            
+            // Boost for plausible readings  
+            if (topScore.plausibilityScore >= 1.0f) {
+                confidence = (confidence * 1.15f).coerceAtMost(100f)  // 15% boost for plausible
+            }
+            
+            // Penalty if we don't have many observations
+            if (totalObservations < MIN_OBSERVATIONS_FOR_PREDICTION) {
+                confidence *= 0.7f
+            }
+            
+            // Boost if all digits agree strongly
+            if (minDigitConfidence > 70f) {
+                confidence = (confidence * 1.1f).coerceAtMost(100f)
+            }
+            
+            // Build reason string
+            val reason = buildString {
+                append("Freq: ${(topScore.frequencyScore * 100).toInt()}%")
+                append(", Valid: ${if (topScore.validityScore >= 1.0f) "✓" else "✗"}")
+                append(", Usage: ${bestCandidate.first.toInt() - previousReading}m³")
+                append(", Obs: $totalObservations")
+            }
+            
+            // Get alternatives (top 3)
+            val alternatives = scoredReadings.drop(1).take(3).map { 
+                it.first to (it.second.totalScore * 100f)
+            }
+            
+            val result = PredictionResult(
+                predictedReading = bestCandidate.first,
+                confidence = confidence,
+                digitConfidences = digitConfidences,
+                reason = reason,
+                alternativeCandidates = alternatives
+            )
+            
+            currentPrediction = result
+            return result
+        }
+        
+        /**
+         * Construct a reading from per-digit analysis.
+         * Useful when full-reading observations are noisy but digit patterns are clear.
+         */
+        fun constructFromDigits(): String {
+            return digitObservations.map { digitMap ->
+                digitMap.maxByOrNull { it.value }?.key ?: '0'
+            }.joinToString("")
+        }
+        
+        /**
+         * Get the most confident digit at each position.
+         */
+        fun getDigitBreakdown(): List<Pair<Char, Float>> {
+            return digitObservations.map { digitMap ->
+                if (digitMap.isEmpty()) return@map '?' to 0f
+                val total = digitMap.values.sum()
+                val best = digitMap.maxByOrNull { it.value }!!
+                best.key to (best.value.toFloat() / total * 100f)
+            }
+        }
+        
+        fun reset() {
+            observations.clear()
+            digitObservations.forEach { it.clear() }
+            totalObservations = 0
+            currentPrediction = null
+        }
+        
+        fun getObservationCount() = totalObservations
+        
+        fun getCurrentPrediction() = currentPrediction
+        
+        private data class ScoredReading(
+            val reading: String,
+            val count: Int,
+            val frequencyScore: Float,
+            val validityScore: Float,
+            val plausibilityScore: Float,
+            val totalScore: Float
+        )
+    }
+    
     // ===== FAILURE TRACKING =====
     
     /**
