@@ -107,28 +107,37 @@ class MeterAnalyzer(
     // The current confidence level (0-100) - with momentum
     private var currentConfidence = 0f
     
-    // Timestamp when we first locked onto this reading
-    private var lockStartTime = 0L
+    // Timestamp when we LAST saw the locked reading (for timeout)
+    private var lastSeenLockedTime = 0L
+    
+    // How many frames since we last saw ANY valid reading
+    private var framesSinceValidReading = 0
     
     // Confidence thresholds
     companion object {
         // Once we hit this confidence, we "lock in" and resist changes
-        const val LOCK_IN_THRESHOLD = 85f
+        const val LOCK_IN_THRESHOLD = 80f
         
         // Minimum frames needed before we consider locking
         const val MIN_FRAMES_TO_LOCK = 3
         
         // How fast confidence grows per consistent frame (additive)
-        const val CONFIDENCE_GROWTH_PER_FRAME = 8f
+        const val CONFIDENCE_GROWTH_PER_FRAME = 15f  // Faster growth!
         
         // How fast confidence decays when we see different readings (multiplicative)
-        const val CONFIDENCE_DECAY_FACTOR = 0.7f
+        const val CONFIDENCE_DECAY_FACTOR = 0.5f  // Faster decay!
+        
+        // How fast confidence decays when we see NOTHING
+        const val NO_DETECTION_DECAY = 0.4f  // Very fast decay when nothing detected!
         
         // Minimum confidence floor when locked (doesn't drop below this easily)
-        const val LOCKED_CONFIDENCE_FLOOR = 75f
+        const val LOCKED_CONFIDENCE_FLOOR = 50f
         
-        // Maximum time (ms) to hold a lock without seeing the reading
-        const val MAX_LOCK_HOLD_TIME = 2000L
+        // Maximum time (ms) to hold a lock WITHOUT seeing the reading
+        const val MAX_LOCK_HOLD_TIME = 500L  // Very short! Release fast
+        
+        // Frames of nothing before we completely release the lock
+        const val FRAMES_TO_RELEASE_LOCK = 4
     }
 
     var captureDebugNextFrame = false
@@ -155,7 +164,39 @@ class MeterAnalyzer(
         lockedReading = ""
         lockedFrameCount = 0
         currentConfidence = 0f
-        lockStartTime = 0L
+        lastSeenLockedTime = 0L
+        framesSinceValidReading = 0
+    }
+    
+    /**
+     * Call this when we detect NOTHING valid this frame.
+     * Rapidly decays confidence and releases lock if sustained.
+     */
+    private fun handleNoDetection() {
+        framesSinceValidReading++
+        
+        // Rapid confidence decay when seeing nothing
+        currentConfidence *= NO_DETECTION_DECAY
+        
+        // If we've seen nothing for too long, release the lock entirely
+        if (framesSinceValidReading >= FRAMES_TO_RELEASE_LOCK) {
+            if (lockedReading.isNotEmpty()) {
+                Log.d("MeterAnalyzer", "Releasing lock on '$lockedReading' - no valid detection for $framesSinceValidReading frames")
+            }
+            lockedReading = ""
+            lockedFrameCount = 0
+            currentConfidence = 0f
+            resultHistory.clear()
+        }
+        
+        // Also check time-based timeout
+        val now = System.currentTimeMillis()
+        if (lockedReading.isNotEmpty() && (now - lastSeenLockedTime) > MAX_LOCK_HOLD_TIME) {
+            Log.d("MeterAnalyzer", "Lock timeout on '$lockedReading' - not seen for ${now - lastSeenLockedTime}ms")
+            lockedReading = ""
+            lockedFrameCount = 0
+            currentConfidence = 0f
+        }
     }
     
     /**
@@ -163,6 +204,7 @@ class MeterAnalyzer(
      * 1. How many frames we've seen this reading (temporal persistence)
      * 2. Previous confidence level (momentum)
      * 3. Lock-in behavior (resistance to noise once confident)
+     * 4. FAST RELEASE when seeing nothing or different reading
      * 
      * @param detectedReading The normalized reading from this frame
      * @param historyAgreement What percentage of history buffer agrees (0-100)
@@ -173,57 +215,59 @@ class MeterAnalyzer(
         val normalizedLocked = ReadingValidator.normalizeReading(lockedReading)
         val now = System.currentTimeMillis()
         
+        // Reset the "no valid reading" counter since we have something
+        framesSinceValidReading = 0
+        
         // Case 1: Same reading as our lock (or we have no lock yet)
         if (normalizedDetected == normalizedLocked || lockedReading.isEmpty()) {
             if (lockedReading.isEmpty() && normalizedDetected.isNotEmpty()) {
                 // First time seeing a valid reading - start tracking
                 lockedReading = detectedReading
-                lockStartTime = now
+                lastSeenLockedTime = now
                 lockedFrameCount = 1
-                currentConfidence = Math.max(historyAgreement, 30f) // Start at history agreement or 30%
+                currentConfidence = Math.max(historyAgreement, 40f) // Start at 40% minimum
             } else if (normalizedDetected == normalizedLocked) {
-                // Same reading! Increase confidence
+                // Same reading! Increase confidence FAST
                 lockedFrameCount++
+                lastSeenLockedTime = now  // Update last seen time!
                 
-                // Confidence grows based on consecutive frames
-                // Fast initial growth, then slower as we approach 100%
-                val growth = CONFIDENCE_GROWTH_PER_FRAME * (1f - currentConfidence / 150f)
+                // Confidence grows quickly
+                val growth = CONFIDENCE_GROWTH_PER_FRAME * (1f - currentConfidence / 120f)
                 currentConfidence = Math.min(100f, currentConfidence + growth)
                 
-                // Also consider history agreement as a boost
+                // History agreement boost
                 if (historyAgreement > currentConfidence) {
-                    currentConfidence = (currentConfidence + historyAgreement) / 2f
+                    currentConfidence = (currentConfidence * 0.6f + historyAgreement * 0.4f)
                 }
             }
         }
         // Case 2: DIFFERENT reading detected
         else {
-            val timeSinceLock = now - lockStartTime
+            val timeSinceSeen = now - lastSeenLockedTime
             
-            // If we're locked in (high confidence), resist the change
-            if (currentConfidence >= LOCK_IN_THRESHOLD && lockedFrameCount >= MIN_FRAMES_TO_LOCK) {
-                // Check if the lock is still fresh (not timed out)
-                if (timeSinceLock < MAX_LOCK_HOLD_TIME) {
-                    // Slightly decay confidence but don't abandon the lock easily
-                    currentConfidence = Math.max(LOCKED_CONFIDENCE_FLOOR, currentConfidence * 0.95f)
-                    Log.d("MeterAnalyzer", "Lock holding: '$lockedReading' (confidence: $currentConfidence), ignoring '$normalizedDetected'")
-                    // Return our locked reading's confidence, not the new one
-                    return currentConfidence
-                }
+            // If we're locked in AND we just saw it recently, resist briefly
+            if (currentConfidence >= LOCK_IN_THRESHOLD && 
+                lockedFrameCount >= MIN_FRAMES_TO_LOCK &&
+                timeSinceSeen < MAX_LOCK_HOLD_TIME) {
+                // Decay confidence but hold the lock
+                currentConfidence = Math.max(LOCKED_CONFIDENCE_FLOOR, currentConfidence * 0.9f)
+                Log.d("MeterAnalyzer", "Lock holding: '$lockedReading' (conf: ${currentConfidence.toInt()}%), saw '$normalizedDetected'")
+                return currentConfidence
             }
             
-            // Not locked, or lock expired - consider switching
-            // Decay confidence significantly
+            // Lock expired or not strong enough - SWITCH to new reading
+            Log.d("MeterAnalyzer", "Switching: '$lockedReading' -> '$normalizedDetected' (old conf: ${currentConfidence.toInt()}%)")
+            
+            // Decay the old confidence
             currentConfidence *= CONFIDENCE_DECAY_FACTOR
             
-            // If confidence dropped low enough, switch to the new reading
-            if (currentConfidence < 40f || lockedFrameCount < MIN_FRAMES_TO_LOCK) {
-                Log.d("MeterAnalyzer", "Switching lock: '$lockedReading' -> '$normalizedDetected'")
-                lockedReading = detectedReading
-                lockStartTime = now
-                lockedFrameCount = 1
-                currentConfidence = Math.max(historyAgreement, 30f)
-            }
+            // Switch to new reading
+            lockedReading = detectedReading
+            lastSeenLockedTime = now
+            lockedFrameCount = 1
+            
+            // Start the new reading with reasonable confidence
+            currentConfidence = Math.max(currentConfidence, Math.max(historyAgreement, 35f))
         }
         
         return currentConfidence
@@ -235,14 +279,20 @@ class MeterAnalyzer(
     private fun getBestReading(frameReading: String): String {
         val normalizedFrame = ReadingValidator.normalizeReading(frameReading)
         val normalizedLocked = ReadingValidator.normalizeReading(lockedReading)
+        val now = System.currentTimeMillis()
+        val timeSinceSeen = now - lastSeenLockedTime
         
-        // If we're locked with high confidence, prefer the locked reading
+        // Only use locked reading if:
+        // 1. We're confident
+        // 2. We've seen it enough times  
+        // 3. We saw it RECENTLY (within timeout)
         if (lockedReading.isNotEmpty() && 
             currentConfidence >= LOCK_IN_THRESHOLD && 
             lockedFrameCount >= MIN_FRAMES_TO_LOCK &&
+            timeSinceSeen < MAX_LOCK_HOLD_TIME &&
             normalizedFrame != normalizedLocked) {
             
-            Log.d("MeterAnalyzer", "Using locked reading '$lockedReading' instead of frame '$frameReading'")
+            Log.d("MeterAnalyzer", "Using locked '$lockedReading' instead of frame '$frameReading'")
             return ReadingValidator.formatReading(lockedReading)
         }
         
@@ -914,7 +964,7 @@ class MeterAnalyzer(
                         lockedReading = formattedResult
                         lockedFrameCount = historySize // Treat as if we've seen it many times
                         currentConfidence = 100f
-                        lockStartTime = System.currentTimeMillis()
+                        lastSeenLockedTime = System.currentTimeMillis()
                         
                         // Mark as Hybrid success with validation
                         emitResult(formattedResult, 100f, allRects, acceptedRects, imageWidth, imageHeight, "H")
@@ -964,7 +1014,7 @@ class MeterAnalyzer(
                         lockedReading = finalReading
                         lockedFrameCount = historySize
                         currentConfidence = Math.max(votingResult.confidence, 90f)
-                        lockStartTime = System.currentTimeMillis()
+                        lastSeenLockedTime = System.currentTimeMillis()
                         
                         emitResult(finalReading, currentConfidence, allRects, acceptedRects, imageWidth, imageHeight, sourceTag)
                         mat.release()
@@ -1121,6 +1171,7 @@ class MeterAnalyzer(
                 // If we see nothing (or garbage) this frame, we should degrade confidence.
                 // If we see NOTHING (empty), clear history immediately to prevent "stuck" results.
                 if (normalizedResult.isEmpty()) {
+                    handleNoDetection()  // <-- RAPID RELEASE when camera sees nothing!
                     resultHistory.clear()
                 }
             }
@@ -1210,9 +1261,12 @@ class MeterAnalyzer(
                     emitResult(finalResult, finalConfidence, allRects, acceptedRects, imageWidth, imageHeight, finalSource)
                 }
             } else {
-                 // Pass empty/current if no history yet - also update smart confidence
+                 // Pass empty/current if no history yet - also handle decay
                  if (normalizedResult.isNotEmpty()) {
                      calculateSmartConfidence(normalizedResult, 0f)
+                 } else {
+                     // Nothing detected this frame - decay!
+                     handleNoDetection()
                  }
                  emitResult(normalizedResult, currentConfidence, allRects, acceptedRects, imageWidth, imageHeight, "L")
             }
