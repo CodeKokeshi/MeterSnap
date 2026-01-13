@@ -33,6 +33,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
+    private var debugVisible = false
     private lateinit var cameraContainer: FrameLayout
     private lateinit var btnSnap: ImageButton
     private lateinit var btnManualInput: ImageButton
@@ -71,6 +72,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
@@ -91,6 +93,9 @@ class MainActivity : AppCompatActivity() {
         scanLine = findViewById(R.id.scan_line)
 
         cameraExecutor = Executors.newSingleThreadExecutor()
+
+        btnDebugStrip.visibility = android.view.View.GONE // Hides the goddamn debug strip
+
 
         // Initialize OpenCV
         if (OpenCVLoader.initDebug()) {
@@ -162,7 +167,8 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         isProcessingSuccess = false
         stableFrames = 0
-        
+        btnDebugStrip.visibility = android.view.View.GONE // Hides the goddamn debug strip
+
         // Update analyzer with current previousReading from settings
         // This is critical when user changes value in Settings and returns
         val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
