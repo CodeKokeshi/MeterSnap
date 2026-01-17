@@ -167,19 +167,29 @@ class MeterAnalyzer(
         resultHistory.clear()
         consecutiveFailures = 0
         firstGlimpseTime = 0L
+        
+        // CRITICAL: Clear ALL MLKit state to prevent stale readings from old meter
         cachedMLKitResult = ""
         cachedMLKitRects.clear()
-        cachedMLKitTimestamp = 0L  // Clear MLKit cache timestamp
+        cachedMLKitTimestamp = 0L
+        mlKitInProgress = false  // FIX: Allow MLKit to restart fresh
+        
         cachedLenetResult = ""
         cachedHybridResult = ""
         failureTracker.reset()
         readingPredictor.reset()  // Reset prediction engine
+        
         // Reset smart confidence
         lockedReading = ""
         lockedFrameCount = 0
         currentConfidence = 0f
         lastSeenLockedTime = 0L
         framesSinceValidReading = 0
+        
+        // FIX: Reset analyzer timestamp to allow immediate processing
+        lastAnalyzedTimestamp = 0L
+        
+        Log.d("MeterAnalyzer", "Full state reset complete - ready for new meter")
     }
     
     /**
@@ -401,6 +411,20 @@ class MeterAnalyzer(
                 failureTracker.recordSuccess()
             } else {
                 failureTracker.recordFailure(validationResult.errorCode)
+                
+                // CRITICAL FIX: If we're repeatedly seeing INVALID readings with high confidence,
+                // it means we're stuck with stale state. Clear locks and caches!
+                if (confidence > 80f && (validationResult.errorCode == ReadingValidator.ErrorCode.READING_TOO_LOW ||
+                                        validationResult.errorCode == ReadingValidator.ErrorCode.IMPOSSIBLE_USAGE)) {
+                    Log.d("MeterAnalyzer", "STUCK DETECTION: High confidence ($confidence%) but INVALID ($${validationResult.errorCode}). Forcing reset of locks!")
+                    lockedReading = ""
+                    lockedFrameCount = 0
+                    currentConfidence = 0f
+                    resultHistory.clear()
+                    cachedMLKitResult = ""
+                    cachedMLKitRects.clear()
+                    cachedMLKitTimestamp = 0L
+                }
             }
         } else if (reading.length < 4) {
             failureTracker.recordFailure(ReadingValidator.ErrorCode.TOO_FEW_DIGITS)
@@ -1049,6 +1073,21 @@ class MeterAnalyzer(
             }
 
             // --- INTEGRATION: ML KIT "JUDGE" ---
+            if (cachedMLKitResult.isNotEmpty()) {
+                // CRITICAL PRE-VALIDATION: Check if cached MLKit result is even valid
+                // This prevents using stale readings from a previous meter
+                val mlKitValue = cachedMLKitResult.toIntOrNull() ?: 0
+                val mlKitIsInvalid = previousReading > 0 && mlKitValue > 0 && mlKitValue < previousReading
+                
+                if (mlKitIsInvalid) {
+                    Log.d("MeterAnalyzer", "Cached MLKit result '$cachedMLKitResult' is INVALID (< previous $previousReading). Clearing cache!")
+                    cachedMLKitResult = ""
+                    cachedMLKitRects.clear()
+                    cachedMLKitTimestamp = 0L
+                }
+            }
+            
+            // --- INTEGRATION: ML KIT "JUDGE" (after validation) ---
             if (cachedMLKitResult.isNotEmpty()) {
                 // Case A: ML Kit found 5 digits. It is the authority.
                 if (cachedMLKitResult.length == 5 || ReadingValidator.normalizeReading(cachedMLKitResult).length >= 4) {

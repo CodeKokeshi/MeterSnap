@@ -165,16 +165,39 @@ class MainActivity : AppCompatActivity() {
     }
     override fun onResume() {
         super.onResume()
+        
+        // CRITICAL: Reset ALL UI and analyzer state
+        // This ensures when user changes meters or previous reading in Settings,
+        // we start completely fresh
         isProcessingSuccess = false
         stableFrames = 0
+        lastStableResult = ""
         btnDebugStrip.visibility = android.view.View.GONE // Hides the goddamn debug strip
 
         // Update analyzer with current previousReading from settings
         // This is critical when user changes value in Settings and returns
+        // setPreviousReading() will call reset() if the value changed
         val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
         val currentPreviousReading = prefs.getInt(PREF_PREVIOUS_READING, 0)
         meterAnalyzer?.setPreviousReading(currentPreviousReading)
+        
+        // Reset UI instructions
+        val tvInstructions = findViewById<android.widget.TextView>(R.id.tv_instructions)
+        tvInstructions?.text = "Align meter in box"
+        tvInstructions?.setTextColor(android.graphics.Color.WHITE)
+        
+        android.util.Log.d("MainActivity", "onResume: Reset state, previous reading = $currentPreviousReading")
     }
+    
+    override fun onPause() {
+        super.onPause()
+        // When user navigates away (e.g., to Settings), pause scanning
+        // This prevents the analyzer from accumulating stale state
+        isProcessingSuccess = false
+        stableFrames = 0
+        android.util.Log.d("MainActivity", "onPause: Paused scanning")
+    }
+    
     private fun hasAllRequiredPermissions(): Boolean {
         val cameraGranted = ContextCompat.checkSelfPermission(
             this,
