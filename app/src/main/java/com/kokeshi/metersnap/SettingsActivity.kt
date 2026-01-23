@@ -1,6 +1,7 @@
 package com.kokeshi.metersnap
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.MenuItem
@@ -36,6 +37,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var textRatesSubtitle: TextView
     private lateinit var textPreviousReading: TextView
     private lateinit var btnEditPreviousReading: Button
+    private lateinit var btnHistoryLogs: Button
 
     private lateinit var ratePreferences: RatePreferences
     private var customRates: MutableList<TierRate> = mutableListOf()
@@ -97,6 +99,7 @@ class SettingsActivity : AppCompatActivity() {
         textRatesSubtitle = findViewById(R.id.text_rates_subtitle)
         textPreviousReading = findViewById(R.id.text_previous_reading)
         btnEditPreviousReading = findViewById(R.id.btn_edit_previous_reading)
+        btnHistoryLogs = findViewById(R.id.btn_history_logs)
         
         // Setup spinner adapter
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, rateTypes)
@@ -199,6 +202,11 @@ class SettingsActivity : AppCompatActivity() {
     private fun setupListeners() {
         btnEditPreviousReading.setOnClickListener {
             showPreviousReadingDialog()
+        }
+        
+        btnHistoryLogs.setOnClickListener {
+            val intent = Intent(this, HistoryActivity::class.java)
+            startActivity(intent)
         }
 
         spinnerRateType.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {

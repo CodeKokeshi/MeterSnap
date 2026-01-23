@@ -26,14 +26,17 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
+import com.kokeshi.metersnap.data.ScanHistoryEntry
 import com.kokeshi.metersnap.utils.BillCalculator
 import com.kokeshi.metersnap.utils.RatePreferences
+import com.kokeshi.metersnap.utils.HistoryManager
+import com.kokeshi.metersnap.utils.BillCalculator.BillResult
 import org.opencv.android.OpenCVLoader
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
-    private var debugVisible = false
     private lateinit var cameraContainer: FrameLayout
     private lateinit var btnSnap: ImageButton
     private lateinit var btnManualInput: ImageButton
@@ -94,7 +97,6 @@ class MainActivity : AppCompatActivity() {
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
-        btnDebugStrip.visibility = android.view.View.GONE // Hides the goddamn debug strip
 
 
         // Initialize OpenCV
@@ -172,7 +174,6 @@ class MainActivity : AppCompatActivity() {
         isProcessingSuccess = false
         stableFrames = 0
         lastStableResult = ""
-        btnDebugStrip.visibility = android.view.View.GONE // Hides the goddamn debug strip
 
         // Update analyzer with current previousReading from settings
         // This is critical when user changes value in Settings and returns
@@ -193,7 +194,6 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
         // When user navigates away (e.g., to Settings), pause scanning
         // This prevents the analyzer from accumulating stale state
-        isProcessingSuccess = false
         stableFrames = 0
         android.util.Log.d("MainActivity", "onPause: Paused scanning")
     }
@@ -713,6 +713,9 @@ class MainActivity : AppCompatActivity() {
             customRates = customRates,
             esfRate = esfRate
         )
+        
+        // Save to history
+        saveToHistory(currentReading, previousReading, usage, rateType, billResult)
 
         // Launch Result Activity
         val intent = android.content.Intent(this, BillResultActivity::class.java).apply {
@@ -732,10 +735,42 @@ class MainActivity : AppCompatActivity() {
             putExtra("TIER_3_USAGE", billResult.tier3Usage)
             putExtra("TIER_3_AMOUNT", billResult.tier3Amount)
             putExtra("TIER_4_USAGE", billResult.tier4Usage)
-            putExtra("TIER_4_AMOUNT", billResult.tier4Amount)
+            putExtra("TI_RATE_TYPEER_4_AMOUNT", billResult.tier4Amount)
             putExtra("TIER_5_USAGE", billResult.tier5Usage)
             putExtra("TIER_5_AMOUNT", billResult.tier5Amount)
         }
         startActivity(intent)
+    }
+    
+    private fun saveToHistory(
+        currentReading: Int,
+        previousReading: Int,
+        usage: Int,
+        rateType: WaterRateType,
+        billResult: BillResult
+    ) {
+        val historyManager = HistoryManager(this)
+        val entry = ScanHistoryEntry(
+            id = UUID.randomUUID().toString(),
+            timestamp = System.currentTimeMillis(),
+            currentReading = currentReading,
+            previousReading = previousReading,
+            usage = usage,
+            rateType = rateType.name,
+            waterBill = billResult.waterBill,
+            esfFee = billResult.esfFee,
+            totalBill = billResult.totalBill,
+            tier1Usage = billResult.tier1Usage,
+            tier1Amount = billResult.tier1Amount,
+            tier2Usage = billResult.tier2Usage,
+            tier2Amount = billResult.tier2Amount,
+            tier3Usage = billResult.tier3Usage,
+            tier3Amount = billResult.tier3Amount,
+            tier4Usage = billResult.tier4Usage,
+            tier4Amount = billResult.tier4Amount,
+            tier5Usage = billResult.tier5Usage,
+            tier5Amount = billResult.tier5Amount
+        )
+        historyManager.addScanEntry(entry)
     }
 }

@@ -1,0 +1,2 @@
+ninja: Entering directory `D:\OS2025Dev\Android\Projects\MeterSnap\opencv\.cxx\Debug\6b1u652i\x86_64'
+ninja: no work to do.

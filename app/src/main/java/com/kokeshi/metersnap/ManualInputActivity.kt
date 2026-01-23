@@ -10,8 +10,12 @@ import androidx.appcompat.widget.Toolbar
 import com.google.android.material.textfield.TextInputEditText
 import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
+import com.kokeshi.metersnap.data.ScanHistoryEntry
 import com.kokeshi.metersnap.utils.BillCalculator
 import com.kokeshi.metersnap.utils.RatePreferences
+import com.kokeshi.metersnap.utils.HistoryManager
+import com.kokeshi.metersnap.utils.BillCalculator.BillResult
+import java.util.UUID
 
 class ManualInputActivity : AppCompatActivity() {
 
@@ -122,6 +126,9 @@ class ManualInputActivity : AppCompatActivity() {
             customRates = customRates,
             esfRate = esfRate
         )
+        
+        // Save to history
+        saveToHistory(currentReading, previousReading, usage, rateType, billResult)
 
         // Navigate to results screen
         val intent = Intent(this, BillResultActivity::class.java).apply {
@@ -144,6 +151,38 @@ class ManualInputActivity : AppCompatActivity() {
             putExtra("TIER_5_AMOUNT", billResult.tier5Amount)
         }
         startActivity(intent)
+    }
+    
+    private fun saveToHistory(
+        currentReading: Int,
+        previousReading: Int,
+        usage: Int,
+        rateType: WaterRateType,
+        billResult: BillResult
+    ) {
+        val historyManager = HistoryManager(this)
+        val entry = ScanHistoryEntry(
+            id = UUID.randomUUID().toString(),
+            timestamp = System.currentTimeMillis(),
+            currentReading = currentReading,
+            previousReading = previousReading,
+            usage = usage,
+            rateType = rateType.name,
+            waterBill = billResult.waterBill,
+            esfFee = billResult.esfFee,
+            totalBill = billResult.totalBill,
+            tier1Usage = billResult.tier1Usage,
+            tier1Amount = billResult.tier1Amount,
+            tier2Usage = billResult.tier2Usage,
+            tier2Amount = billResult.tier2Amount,
+            tier3Usage = billResult.tier3Usage,
+            tier3Amount = billResult.tier3Amount,
+            tier4Usage = billResult.tier4Usage,
+            tier4Amount = billResult.tier4Amount,
+            tier5Usage = billResult.tier5Usage,
+            tier5Amount = billResult.tier5Amount
+        )
+        historyManager.addScanEntry(entry)
     }
 
     override fun onSupportNavigateUp(): Boolean {

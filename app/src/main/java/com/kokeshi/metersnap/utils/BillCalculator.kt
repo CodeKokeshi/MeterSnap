@@ -4,37 +4,37 @@ import com.kokeshi.metersnap.data.TierRate
 import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
 
-/**
- * Bill calculation result containing itemized breakdown
- */
-data class BillResult(
-    val waterBill: Double,
-    val esfFee: Double,
-    val totalBill: Double,
-    val tier1Usage: Int,
-    val tier1Amount: Double,
-    val tier2Usage: Int,
-    val tier2Amount: Double,
-    val tier3Usage: Int,
-    val tier3Amount: Double,
-    val tier4Usage: Int,
-    val tier4Amount: Double,
-    val tier5Usage: Int,
-    val tier5Amount: Double
-)
-
 object BillCalculator {
 
     /**
+     * Bill calculation result containing itemized breakdown
+     */
+    data class BillResult(
+        val waterBill: Double,
+        val esfFee: Double,
+        val totalBill: Double,
+        val tier1Usage: Int,
+        val tier1Amount: Double,
+        val tier2Usage: Int,
+        val tier2Amount: Double,
+        val tier3Usage: Int,
+        val tier3Amount: Double,
+        val tier4Usage: Int,
+        val tier4Amount: Double,
+        val tier5Usage: Int,
+        val tier5Amount: Double
+    )
+
+    /**
      * Calculate water bill based on usage and rate type
-     * 
+     *
      * Calculation Logic (from Development.md):
      * - 1-10 cu.m.: Minimum charge (fixed rate for entire range)
      * - 11-20 cu.m.: Rate per cu.m. × usage in this tier
      * - 21-30 cu.m.: Rate per cu.m. × usage in this tier
      * - 31-40 cu.m.: Rate per cu.m. × usage in this tier
      * - 41+ cu.m.: Rate per cu.m. × usage in this tier
-     * 
+     *
      * ESF = Total Usage × ESF Rate
      * Total Bill = Water Bill + ESF
      */

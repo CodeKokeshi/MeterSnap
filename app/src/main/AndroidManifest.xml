@@ -41,6 +41,11 @@
             android:exported="false"
             android:parentActivityName=".ManualInputActivity"
             android:theme="@style/Theme.MeterSnap" />
+        <activity
+            android:name=".HistoryActivity"
+            android:exported="false"
+            android:parentActivityName=".SettingsActivity"
+            android:theme="@style/Theme.MeterSnap" />
     </application>
 
 </manifest>
