@@ -31,10 +31,10 @@ import androidx.cardview.widget.CardView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.kokeshi.metersnap.data.WaterRateType
+import com.kokeshi.metersnap.data.WaterRates
 import com.kokeshi.metersnap.utils.BillCalculator
 import com.kokeshi.metersnap.utils.RatePreferences
 import com.kokeshi.metersnap.utils.RateTableManager
-import com.kokeshi.metersnap.utils.WaterRates
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
