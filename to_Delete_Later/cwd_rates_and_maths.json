@@ -1,0 +1,74 @@
+{
+  "config_version": 2025,
+  "table_label": "January 2025 - Carmona Water District",
+  "effective_date": "2025-01-01",
+  "esf_rate": 3.5,
+  "service_types": [
+    {
+      "type_id": "RESIDENTIAL",
+      "display_name": "Residential",
+      "tiers": [
+        { "min": 1, "max": 10, "is_minimum_charge": true, "rate": 238.60 },
+        { "min": 11, "max": 20, "is_minimum_charge": false, "rate": 26.20 },
+        { "min": 21, "max": 30, "is_minimum_charge": false, "rate": 29.00 },
+        { "min": 31, "max": 40, "is_minimum_charge": false, "rate": 32.60 },
+        { "min": 41, "max": null, "is_minimum_charge": false, "rate": 37.00 }
+      ]
+    },
+    {
+      "type_id": "COMMERCIAL",
+      "display_name": "Commercial/Industrial",
+      "tiers": [
+        { "min": 1, "max": 10, "is_minimum_charge": true, "rate": 477.20 },
+        { "min": 11, "max": 20, "is_minimum_charge": false, "rate": 52.40 },
+        { "min": 21, "max": 30, "is_minimum_charge": false, "rate": 58.00 },
+        { "min": 31, "max": 40, "is_minimum_charge": false, "rate": 65.20 },
+        { "min": 41, "max": null, "is_minimum_charge": false, "rate": 74.00 }
+      ]
+    },
+    {
+      "type_id": "GOVERNMENT",
+      "display_name": "Government",
+      "tiers": [
+        { "min": 1, "max": 10, "is_minimum_charge": true, "rate": 238.60 },
+        { "min": 11, "max": 20, "is_minimum_charge": false, "rate": 26.20 },
+        { "min": 21, "max": 30, "is_minimum_charge": false, "rate": 29.00 },
+        { "min": 31, "max": 40, "is_minimum_charge": false, "rate": 32.60 },
+        { "min": 41, "max": null, "is_minimum_charge": false, "rate": 37.00 }
+      ]
+    },
+    {
+      "type_id": "SEMI_COMMERCIAL_A",
+      "display_name": "Semi-Commercial A",
+      "tiers": [
+        { "min": 1, "max": 10, "is_minimum_charge": true, "rate": 417.55 },
+        { "min": 11, "max": 20, "is_minimum_charge": false, "rate": 45.85 },
+        { "min": 21, "max": 30, "is_minimum_charge": false, "rate": 50.75 },
+        { "min": 31, "max": 40, "is_minimum_charge": false, "rate": 57.05 },
+        { "min": 41, "max": null, "is_minimum_charge": false, "rate": 64.75 }
+      ]
+    },
+    {
+      "type_id": "SEMI_COMMERCIAL_B",
+      "display_name": "Semi-Commercial B",
+      "tiers": [
+        { "min": 1, "max": 10, "is_minimum_charge": true, "rate": 357.90 },
+        { "min": 11, "max": 20, "is_minimum_charge": false, "rate": 39.30 },
+        { "min": 21, "max": 30, "is_minimum_charge": false, "rate": 43.50 },
+        { "min": 31, "max": 40, "is_minimum_charge": false, "rate": 48.90 },
+        { "min": 41, "max": null, "is_minimum_charge": false, "rate": 55.50 }
+      ]
+    },
+    {
+      "type_id": "SEMI_COMMERCIAL_C",
+      "display_name": "Semi-Commercial C",
+      "tiers": [
+        { "min": 1, "max": 10, "is_minimum_charge": true, "rate": 298.25 },
+        { "min": 11, "max": 20, "is_minimum_charge": false, "rate": 32.75 },
+        { "min": 21, "max": 30, "is_minimum_charge": false, "rate": 36.25 },
+        { "min": 31, "max": 40, "is_minimum_charge": false, "rate": 40.75 },
+        { "min": 41, "max": null, "is_minimum_charge": false, "rate": 46.25 }
+      ]
+    }
+  ]
+}

@@ -3,6 +3,8 @@ package com.kokeshi.metersnap
 import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
@@ -19,11 +21,16 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.textfield.TextInputEditText
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import com.kokeshi.metersnap.data.TierRate
 import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
+import com.kokeshi.metersnap.data.RemoteServiceType
+import com.kokeshi.metersnap.data.RemoteTier
 import com.kokeshi.metersnap.utils.RatePreferences
+import com.kokeshi.metersnap.utils.RateTableManager
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -38,20 +45,22 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var textPreviousReading: TextView
     private lateinit var btnEditPreviousReading: Button
     private lateinit var btnHistoryLogs: Button
+    private lateinit var btnUpdateRates: Button
+    private lateinit var textLastUpdated: TextView
 
     private lateinit var ratePreferences: RatePreferences
+    private lateinit var rateTableManager: RateTableManager
+    private val mainHandler = Handler(Looper.getMainLooper())
+    
     private var customRates: MutableList<TierRate> = mutableListOf()
     private var currentESFRate: Double = 3.50
     
-    private val rateTypes = listOf(
-        "Residential",
-        "Commercial/Industrial", 
-        "Government",
-        "Semi-Commercial A",
-        "Semi-Commercial B",
-        "Semi-Commercial C",
-        "Custom Settings"
-    )
+    // Dynamic rate types from remote config
+    private var dynamicRateTypes: List<String> = emptyList()
+    private var dynamicServiceTypes: List<RemoteServiceType> = emptyList()
+    
+    // Flag to indicate if we're using remote config
+    private var usingRemoteConfig = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,12 +70,15 @@ class SettingsActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         ratePreferences = RatePreferences(this)
+        rateTableManager = RateTableManager(this)
 
         initializeViews()
         setupToolbar()
         setupWindowInsets()
+        loadDynamicRateTypes()
         loadSavedSettings()
         setupListeners()
+        updateLastFetchedDisplay()
     }
 
     private fun setupWindowInsets() {
@@ -100,11 +112,40 @@ class SettingsActivity : AppCompatActivity() {
         textPreviousReading = findViewById(R.id.text_previous_reading)
         btnEditPreviousReading = findViewById(R.id.btn_edit_previous_reading)
         btnHistoryLogs = findViewById(R.id.btn_history_logs)
+        btnUpdateRates = findViewById(R.id.btn_update_rates)
+        textLastUpdated = findViewById(R.id.text_last_updated)
+    }
+    
+    /**
+     * Load rate types from RateTableManager (uses cached remote or defaults)
+     */
+    private fun loadDynamicRateTypes() {
+        val config = rateTableManager.getActiveConfig()
+        dynamicServiceTypes = config.serviceTypes
+        usingRemoteConfig = rateTableManager.hasCachedConfig()
         
-        // Setup spinner adapter
-        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, rateTypes)
+        // Build display names list (add "Custom Settings" at the end)
+        dynamicRateTypes = config.serviceTypes.map { it.displayName } + listOf("Custom Settings")
+        
+        // Setup spinner adapter with dynamic types
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, dynamicRateTypes)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         spinnerRateType.adapter = adapter
+    }
+    
+    /**
+     * Update the "last fetched" display text
+     */
+    private fun updateLastFetchedDisplay() {
+        val lastFetch = rateTableManager.getLastFetchTime()
+        if (lastFetch > 0) {
+            val dateFormat = SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.US)
+            val dateStr = dateFormat.format(Date(lastFetch))
+            val version = rateTableManager.getCachedConfigVersion()
+            textLastUpdated.text = "Last updated: $dateStr (v$version)"
+        } else {
+            textLastUpdated.text = "Using default built-in rates"
+        }
     }
 
     private fun setupToolbar() {
@@ -136,64 +177,44 @@ class SettingsActivity : AppCompatActivity() {
             textPreviousReading.text = "Not Set"
         }
 
-        // Load rate type
+        // Load rate type and find position in dynamic list
         val savedType = ratePreferences.getRateType()
         val position = when (savedType) {
-            WaterRateType.RESIDENTIAL -> 0
-            WaterRateType.COMMERCIAL -> 1
-            WaterRateType.GOVERNMENT -> 2
-            WaterRateType.SEMI_COMMERCIAL_A -> 3
-            WaterRateType.SEMI_COMMERCIAL_B -> 4
-            WaterRateType.SEMI_COMMERCIAL_C -> 5
-            WaterRateType.CUSTOM -> 6
+            WaterRateType.CUSTOM -> dynamicRateTypes.size - 1 // Custom is always last
+            else -> {
+                // Find by type ID in dynamic service types
+                val typeId = savedType.name
+                val idx = dynamicServiceTypes.indexOfFirst { it.typeId == typeId }
+                if (idx >= 0) idx else 0
+            }
         }
         
         spinnerRateType.setSelection(position)
         
-        // Load appropriate settings based on type
-        when (savedType) {
-            WaterRateType.RESIDENTIAL -> {
-                currentESFRate = WaterRates.RESIDENTIAL_ESF
-                btnEditESF.visibility = View.GONE
-                textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-            }
-            WaterRateType.COMMERCIAL -> {
-                currentESFRate = WaterRates.COMMERCIAL_ESF
-                btnEditESF.visibility = View.GONE
-                textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-            }
-            WaterRateType.GOVERNMENT -> {
-                currentESFRate = WaterRates.GOVERNMENT_ESF
-                btnEditESF.visibility = View.GONE
-                textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-            }
-            WaterRateType.SEMI_COMMERCIAL_A -> {
-                currentESFRate = WaterRates.SEMI_COMMERCIAL_A_ESF
-                btnEditESF.visibility = View.GONE
-                textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-            }
-            WaterRateType.SEMI_COMMERCIAL_B -> {
-                currentESFRate = WaterRates.SEMI_COMMERCIAL_B_ESF
-                btnEditESF.visibility = View.GONE
-                textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-            }
-            WaterRateType.SEMI_COMMERCIAL_C -> {
-                currentESFRate = WaterRates.SEMI_COMMERCIAL_C_ESF
-                btnEditESF.visibility = View.GONE
-                textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-            }
-            WaterRateType.CUSTOM -> {
-                btnEditESF.visibility = View.VISIBLE
-                btnEditCustomRates.visibility = View.VISIBLE
-                customRates = ratePreferences.getCustomRates().toMutableList()
-                if (customRates.isEmpty()) {
-                    // Initialize with default residential rates
-                    customRates = WaterRates.RESIDENTIAL_RATES.toMutableList()
+        // Load ESF rate from active config
+        currentESFRate = rateTableManager.getEsfRate()
+        textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
+        
+        // Handle Custom type visibility
+        if (savedType == WaterRateType.CUSTOM) {
+            btnEditESF.visibility = View.VISIBLE
+            btnEditCustomRates.visibility = View.VISIBLE
+            customRates = ratePreferences.getCustomRates().toMutableList()
+            if (customRates.isEmpty()) {
+                // Initialize with first service type's rates as TierRate
+                val firstType = dynamicServiceTypes.firstOrNull()
+                if (firstType != null) {
+                    customRates = firstType.tiers.map { 
+                        TierRate(it.min, it.max ?: Int.MAX_VALUE, it.rate) 
+                    }.toMutableList()
                 }
-                // Load saved custom ESF rate
-                currentESFRate = ratePreferences.getESFRate()
-                textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
             }
+            // Load saved custom ESF rate
+            currentESFRate = ratePreferences.getESFRate()
+            textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
+        } else {
+            btnEditESF.visibility = View.GONE
+            btnEditCustomRates.visibility = View.GONE
         }
 
         updateRateTiersDisplay()
@@ -208,73 +229,45 @@ class SettingsActivity : AppCompatActivity() {
             val intent = Intent(this, HistoryActivity::class.java)
             startActivity(intent)
         }
+        
+        btnUpdateRates.setOnClickListener {
+            showUpdateConfirmationDialog()
+        }
 
         spinnerRateType.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                when (position) {
-                    0 -> { // Residential
-                        btnEditCustomRates.visibility = View.GONE
-                        btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = getString(R.string.residential_government_rates_jan_2025)
-                        currentESFRate = WaterRates.RESIDENTIAL_ESF
-                        textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-                        updateRateTiersDisplay()
+                val isCustom = position == dynamicRateTypes.size - 1
+                
+                if (isCustom) {
+                    // Custom Settings
+                    btnEditCustomRates.visibility = View.VISIBLE
+                    btnEditESF.visibility = View.VISIBLE
+                    textRatesSubtitle.text = getString(R.string.custom_settings_editable)
+                    
+                    // Load saved custom rates and ESF
+                    customRates = ratePreferences.getCustomRates().toMutableList()
+                    if (customRates.isEmpty() && dynamicServiceTypes.isNotEmpty()) {
+                        val firstType = dynamicServiceTypes.first()
+                        customRates = firstType.tiers.map { 
+                            TierRate(it.min, it.max ?: Int.MAX_VALUE, it.rate) 
+                        }.toMutableList()
                     }
-                    1 -> { // Commercial
-                        btnEditCustomRates.visibility = View.GONE
-                        btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = getString(R.string.commercial_industrial_rates_jan_2025)
-                        currentESFRate = WaterRates.COMMERCIAL_ESF
+                    currentESFRate = ratePreferences.getESFRate()
+                    textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
+                } else {
+                    // Dynamic preset type
+                    btnEditCustomRates.visibility = View.GONE
+                    btnEditESF.visibility = View.GONE
+                    
+                    if (position < dynamicServiceTypes.size) {
+                        val serviceType = dynamicServiceTypes[position]
+                        textRatesSubtitle.text = "${serviceType.displayName} - ${rateTableManager.getTableLabel()}"
+                        currentESFRate = rateTableManager.getEsfRate()
                         textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-                        updateRateTiersDisplay()
-                    }
-                    2 -> { // Government
-                        btnEditCustomRates.visibility = View.GONE
-                        btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = getString(R.string.residential_government_rates_jan_2025)
-                        currentESFRate = WaterRates.GOVERNMENT_ESF
-                        textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-                        updateRateTiersDisplay()
-                    }
-                    3 -> { // Semi-Commercial A
-                        btnEditCustomRates.visibility = View.GONE
-                        btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = getString(R.string.semi_commercial_a_rates_jan_2025)
-                        currentESFRate = WaterRates.SEMI_COMMERCIAL_A_ESF
-                        textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-                        updateRateTiersDisplay()
-                    }
-                    4 -> { // Semi-Commercial B
-                        btnEditCustomRates.visibility = View.GONE
-                        btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = getString(R.string.semi_commercial_b_rates_jan_2025)
-                        currentESFRate = WaterRates.SEMI_COMMERCIAL_B_ESF
-                        textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-                        updateRateTiersDisplay()
-                    }
-                    5 -> { // Semi-Commercial C
-                        btnEditCustomRates.visibility = View.GONE
-                        btnEditESF.visibility = View.GONE
-                        textRatesSubtitle.text = getString(R.string.semi_commercial_c_rates_jan_2025)
-                        currentESFRate = WaterRates.SEMI_COMMERCIAL_C_ESF
-                        textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-                        updateRateTiersDisplay()
-                    }
-                    6 -> { // Custom
-                        btnEditCustomRates.visibility = View.VISIBLE
-                        btnEditESF.visibility = View.VISIBLE
-                        textRatesSubtitle.text = getString(R.string.custom_settings_editable)
-                        // Load saved custom rates and ESF
-                        customRates = ratePreferences.getCustomRates().toMutableList()
-                        if (customRates.isEmpty()) {
-                            customRates = WaterRates.RESIDENTIAL_RATES.toMutableList()
-                        }
-                        // Load saved custom ESF rate
-                        currentESFRate = ratePreferences.getESFRate()
-                        textESFRate.text = String.format(Locale.US, "%.2f", currentESFRate)
-                        updateRateTiersDisplay()
                     }
                 }
+                
+                updateRateTiersDisplay()
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {
@@ -294,25 +287,122 @@ class SettingsActivity : AppCompatActivity() {
             saveSettings()
         }
     }
+    
+    /**
+     * Show confirmation dialog before fetching (warns about internet requirement)
+     */
+    private fun showUpdateConfirmationDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Fetch Latest Rate Table")
+            .setMessage("This will connect to the internet to check for updated water rates from Carmona Water District.\n\nPlease make sure you have an active internet connection.")
+            .setPositiveButton("Fetch Now") { _, _ ->
+                fetchLatestRates()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+    
+    /**
+     * Fetch latest rates from remote server
+     */
+    private fun fetchLatestRates() {
+        // Show loading state
+        btnUpdateRates.isEnabled = false
+        btnUpdateRates.text = "Fetching..."
+        textLastUpdated.text = "Connecting to server..."
+        
+        // Fetch in background
+        Thread {
+            val result = rateTableManager.fetchRemoteConfig()
+            
+            // Update UI on main thread
+            mainHandler.post {
+                btnUpdateRates.isEnabled = true
+                btnUpdateRates.text = "Fetch Latest Rate Table"
+                
+                when (result) {
+                    is RateTableManager.FetchResult.Success -> {
+                        if (result.isNew) {
+                            Toast.makeText(
+                                this,
+                                "Rate table updated to version ${result.config.configVersion}!",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            Toast.makeText(
+                                this,
+                                "You already have the latest rates (v${result.config.configVersion})",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        
+                        // Reload the UI with new config
+                        loadDynamicRateTypes()
+                        loadSavedSettings()
+                        updateLastFetchedDisplay()
+                    }
+                    is RateTableManager.FetchResult.Error -> {
+                        Toast.makeText(
+                            this,
+                            "Failed to fetch rates: ${result.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        updateLastFetchedDisplay()
+                    }
+                }
+            }
+        }.start()
+    }
 
     private fun updateRateTiersDisplay() {
         containerRateTiers.removeAllViews()
 
-        val rates = when (spinnerRateType.selectedItemPosition) {
-            0 -> WaterRates.RESIDENTIAL_RATES
-            1 -> WaterRates.COMMERCIAL_RATES
-            2 -> WaterRates.GOVERNMENT_RATES
-            3 -> WaterRates.SEMI_COMMERCIAL_A_RATES
-            4 -> WaterRates.SEMI_COMMERCIAL_B_RATES
-            5 -> WaterRates.SEMI_COMMERCIAL_C_RATES
-            6 -> customRates
-            else -> WaterRates.RESIDENTIAL_RATES
+        val position = spinnerRateType.selectedItemPosition
+        val isCustom = position == dynamicRateTypes.size - 1
+        
+        if (isCustom) {
+            // Custom rates use TierRate format
+            customRates.forEach { tier ->
+                val tierView = createTierView(tier)
+                containerRateTiers.addView(tierView)
+            }
+        } else if (position < dynamicServiceTypes.size) {
+            // Dynamic service type from remote/default config
+            val serviceType = dynamicServiceTypes[position]
+            serviceType.tiers.forEach { tier ->
+                val tierView = createRemoteTierView(tier)
+                containerRateTiers.addView(tierView)
+            }
         }
+    }
+    
+    /**
+     * Create tier view for RemoteTier (dynamic format with is_minimum_charge support)
+     */
+    private fun createRemoteTierView(tier: RemoteTier): View {
+        val inflater = LayoutInflater.from(this)
+        val view = inflater.inflate(R.layout.item_rate_tier, containerRateTiers, false)
 
-        rates.forEach { tier ->
-            val tierView = createTierView(tier)
-            containerRateTiers.addView(tierView)
+        val textRange = view.findViewById<TextView>(R.id.text_tier_range)
+        val textRate = view.findViewById<TextView>(R.id.text_tier_rate)
+
+        // Build range text
+        val rangeText = if (tier.max == null) {
+            "${tier.min}+ m³"
+        } else {
+            "${tier.min}-${tier.max} m³"
         }
+        textRange.text = rangeText
+        
+        // Build rate text based on is_minimum_charge flag
+        val rateText = if (tier.isMinimumCharge) {
+            String.format(Locale.US, "₱%.2f (minimum charge)", tier.rate)
+        } else {
+            String.format(Locale.US, "₱%.2f per m³", tier.rate)
+        }
+        textRate.text = rateText
+
+        return view
     }
 
     private fun createTierView(tier: TierRate): View {
@@ -513,17 +603,26 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun saveSettings() {
         try {
-            // Save rate type
-            val rateType = when (spinnerRateType.selectedItemPosition) {
-                0 -> WaterRateType.RESIDENTIAL
-                1 -> WaterRateType.COMMERCIAL
-                2 -> WaterRateType.GOVERNMENT
-                3 -> WaterRateType.SEMI_COMMERCIAL_A
-                4 -> WaterRateType.SEMI_COMMERCIAL_B
-                5 -> WaterRateType.SEMI_COMMERCIAL_C
-                6 -> WaterRateType.CUSTOM
-                else -> WaterRateType.RESIDENTIAL
+            val position = spinnerRateType.selectedItemPosition
+            val isCustom = position == dynamicRateTypes.size - 1
+            
+            // Determine the rate type to save
+            val rateType: WaterRateType = if (isCustom) {
+                WaterRateType.CUSTOM
+            } else if (position < dynamicServiceTypes.size) {
+                // Map dynamic service type ID to WaterRateType enum
+                val typeId = dynamicServiceTypes[position].typeId
+                try {
+                    WaterRateType.valueOf(typeId)
+                } catch (e: IllegalArgumentException) {
+                    // If the remote config has a new type not in our enum, default to RESIDENTIAL
+                    // In future, we could save the typeId string directly
+                    WaterRateType.RESIDENTIAL
+                }
+            } else {
+                WaterRateType.RESIDENTIAL
             }
+            
             ratePreferences.saveRateType(rateType)
 
             // Only save ESF rate for custom settings

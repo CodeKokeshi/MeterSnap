@@ -1,5 +1,7 @@
 package com.kokeshi.metersnap.utils
 
+import com.kokeshi.metersnap.data.RemoteServiceType
+import com.kokeshi.metersnap.data.RemoteTier
 import com.kokeshi.metersnap.data.TierRate
 import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
@@ -7,7 +9,10 @@ import com.kokeshi.metersnap.data.WaterRates
 object BillCalculator {
 
     /**
-     * Bill calculation result containing itemized breakdown
+     * Bill calculation result containing itemized breakdown.
+     * 
+     * Note: tier1-5 fields are kept for backward compatibility with existing UI.
+     * For dynamic tier support, use tierBreakdown list instead.
      */
     data class BillResult(
         val waterBill: Double,
@@ -22,21 +27,117 @@ object BillCalculator {
         val tier4Usage: Int,
         val tier4Amount: Double,
         val tier5Usage: Int,
-        val tier5Amount: Double
+        val tier5Amount: Double,
+        // Dynamic tier breakdown for future UI that supports any number of tiers
+        val tierBreakdown: List<TierBreakdownItem> = emptyList()
+    )
+    
+    /**
+     * Single tier breakdown item for dynamic rendering
+     */
+    data class TierBreakdownItem(
+        val tierIndex: Int,
+        val label: String,
+        val usageInTier: Int,
+        val amount: Double,
+        val isMinimumCharge: Boolean
     )
 
     /**
-     * Calculate water bill based on usage and rate type
-     *
-     * Calculation Logic (from Development.md):
-     * - 1-10 cu.m.: Minimum charge (fixed rate for entire range)
-     * - 11-20 cu.m.: Rate per cu.m. × usage in this tier
-     * - 21-30 cu.m.: Rate per cu.m. × usage in this tier
-     * - 31-40 cu.m.: Rate per cu.m. × usage in this tier
-     * - 41+ cu.m.: Rate per cu.m. × usage in this tier
-     *
-     * ESF = Total Usage × ESF Rate
-     * Total Bill = Water Bill + ESF
+     * Calculate water bill using RemoteServiceType (new flexible format).
+     * Supports any number of tiers and respects is_minimum_charge flag.
+     * 
+     * Math Logic:
+     * - If is_minimum_charge = true: tier_cost = rate (fixed amount, regardless of usage in tier)
+     * - If is_minimum_charge = false: tier_cost = usage_in_tier × rate
+     * - ESF = total_usage × esf_rate
+     * - Total = water_bill + ESF
+     */
+    fun calculateBillDynamic(
+        usage: Int,
+        serviceType: RemoteServiceType,
+        esfRate: Double
+    ): BillResult {
+        var remainingUsage = usage
+        var waterBill = 0.0
+        val breakdownList = mutableListOf<TierBreakdownItem>()
+        
+        // Legacy tier tracking (for backward compatibility with existing UI)
+        val legacyUsage = IntArray(5)
+        val legacyAmount = DoubleArray(5)
+
+        // Process each tier dynamically
+        for ((index, tier) in serviceType.tiers.withIndex()) {
+            if (remainingUsage <= 0) break
+
+            // Calculate tier capacity
+            val tierCapacity = if (tier.max == null) {
+                // Open-ended tier (e.g., 41+)
+                remainingUsage
+            } else {
+                tier.max - tier.min + 1
+            }
+            
+            val usageInTier = minOf(remainingUsage, tierCapacity)
+
+            // Calculate cost based on tier type
+            val tierCost = if (tier.isMinimumCharge) {
+                // Minimum charge: fixed amount for the entire tier
+                tier.rate
+            } else {
+                // Per-unit: usage × rate
+                usageInTier * tier.rate
+            }
+
+            waterBill += tierCost
+            
+            // Add to dynamic breakdown
+            breakdownList.add(
+                TierBreakdownItem(
+                    tierIndex = index,
+                    label = tier.getLabelWithType(),
+                    usageInTier = usageInTier,
+                    amount = tierCost,
+                    isMinimumCharge = tier.isMinimumCharge
+                )
+            )
+
+            // Legacy tier tracking (first 5 tiers only)
+            if (index < 5) {
+                legacyUsage[index] = usageInTier
+                legacyAmount[index] = tierCost
+            }
+
+            remainingUsage -= usageInTier
+        }
+
+        // Calculate ESF
+        val esfFee = usage * esfRate
+
+        // Total Bill
+        val totalBill = waterBill + esfFee
+
+        return BillResult(
+            waterBill = waterBill,
+            esfFee = esfFee,
+            totalBill = totalBill,
+            tier1Usage = legacyUsage[0],
+            tier1Amount = legacyAmount[0],
+            tier2Usage = legacyUsage[1],
+            tier2Amount = legacyAmount[1],
+            tier3Usage = legacyUsage[2],
+            tier3Amount = legacyAmount[2],
+            tier4Usage = legacyUsage[3],
+            tier4Amount = legacyAmount[3],
+            tier5Usage = legacyUsage[4],
+            tier5Amount = legacyAmount[4],
+            tierBreakdown = breakdownList
+        )
+    }
+
+    /**
+     * Legacy calculate bill method for backward compatibility.
+     * Uses the old WaterRateType enum and TierRate format.
      */
     fun calculateBill(
         usage: Int,

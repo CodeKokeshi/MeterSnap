@@ -13,6 +13,7 @@ import com.kokeshi.metersnap.data.WaterRates
 import com.kokeshi.metersnap.data.ScanHistoryEntry
 import com.kokeshi.metersnap.utils.BillCalculator
 import com.kokeshi.metersnap.utils.RatePreferences
+import com.kokeshi.metersnap.utils.RateTableManager
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.BillCalculator.BillResult
 import java.util.UUID
@@ -24,12 +25,14 @@ class ManualInputActivity : AppCompatActivity() {
     private lateinit var editPreviousReading: TextInputEditText
     private lateinit var btnCalculate: Button
     private lateinit var ratePreferences: RatePreferences
+    private lateinit var rateTableManager: RateTableManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_manual_input)
 
         ratePreferences = RatePreferences(this)
+        rateTableManager = RateTableManager(this)
         
         initializeViews()
         setupToolbar()
@@ -110,22 +113,36 @@ class ManualInputActivity : AppCompatActivity() {
         val rateType = ratePreferences.getRateType()
         val customRates = ratePreferences.getCustomRates()
         
-        // Get ESF rate based on rate type
-        // For custom settings, use saved custom ESF rate
-        // For preset types, use the preset's ESF rate
-        val esfRate = if (rateType == WaterRateType.CUSTOM) {
-            ratePreferences.getESFRate()
+        // Calculate bill using dynamic method if not custom
+        val billResult: BillResult = if (rateType == WaterRateType.CUSTOM) {
+            // Custom uses legacy calculation with saved custom rates
+            val esfRate = ratePreferences.getESFRate()
+            BillCalculator.calculateBill(
+                usage = usage,
+                rateType = rateType,
+                customRates = customRates,
+                esfRate = esfRate
+            )
         } else {
-            WaterRates.getESFForType(rateType)
+            // Use dynamic calculation from RateTableManager
+            val serviceType = rateTableManager.getServiceType(rateType.name)
+            if (serviceType != null) {
+                BillCalculator.calculateBillDynamic(
+                    usage = usage,
+                    serviceType = serviceType,
+                    esfRate = rateTableManager.getEsfRate()
+                )
+            } else {
+                // Fallback to legacy if service type not found
+                val esfRate = WaterRates.getESFForType(rateType)
+                BillCalculator.calculateBill(
+                    usage = usage,
+                    rateType = rateType,
+                    customRates = customRates,
+                    esfRate = esfRate
+                )
+            }
         }
-
-        // Calculate bill
-        val billResult = BillCalculator.calculateBill(
-            usage = usage,
-            rateType = rateType,
-            customRates = customRates,
-            esfRate = esfRate
-        )
         
         // Save to history
         saveToHistory(currentReading, previousReading, usage, rateType, billResult)
