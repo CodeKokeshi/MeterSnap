@@ -14,7 +14,7 @@ import com.google.gson.annotations.SerializedName
 
 data class RemoteRateConfig(
     @SerializedName("config_version")
-    val configVersion: Int,
+    val configVersion: Double,
     
     @SerializedName("table_label")
     val tableLabel: String,

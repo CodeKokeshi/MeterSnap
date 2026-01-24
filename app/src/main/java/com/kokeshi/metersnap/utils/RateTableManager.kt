@@ -42,7 +42,7 @@ class RateTableManager(private val context: Context) {
         private const val KEY_TABLE_LABEL = "table_label"
         
         // Default hardcoded config version
-        const val DEFAULT_CONFIG_VERSION = 2025
+        const val DEFAULT_CONFIG_VERSION = 2025.0
     }
     
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -146,8 +146,8 @@ class RateTableManager(private val context: Context) {
     /**
      * Get the cached config version number
      */
-    fun getCachedConfigVersion(): Int {
-        return prefs.getInt(KEY_CACHED_VERSION, 0)
+    fun getCachedConfigVersion(): Double {
+        return prefs.getFloat(KEY_CACHED_VERSION, 0f).toDouble()
     }
     
     /**
@@ -190,7 +190,7 @@ class RateTableManager(private val context: Context) {
     private fun cacheConfig(config: RemoteRateConfig, rawJson: String) {
         prefs.edit {
             putString(KEY_CACHED_CONFIG, rawJson)
-            putInt(KEY_CACHED_VERSION, config.configVersion)
+            putFloat(KEY_CACHED_VERSION, config.configVersion.toFloat())
             putLong(KEY_LAST_FETCH_TIME, System.currentTimeMillis())
             putString(KEY_TABLE_LABEL, config.tableLabel)
         }
