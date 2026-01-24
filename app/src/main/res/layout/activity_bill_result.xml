@@ -59,14 +59,66 @@
                         android:textStyle="bold"
                         android:layout_marginBottom="12dp" />
 
+                    <!-- Reading display with editable current -->
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="8dp">
+
+                        <TextView
+                            android:id="@+id/text_previous_label"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Previous: "
+                            android:textColor="?android:attr/textColorSecondary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:id="@+id/text_previous_reading"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="50"
+                            android:textColor="?android:attr/textColorSecondary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text=" → Current: "
+                            android:textColor="?android:attr/textColorSecondary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:id="@+id/text_current_reading"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="79"
+                            android:textColor="@color/design_default_color_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold"
+                            android:padding="4dp"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true" />
+
+                        <ImageView
+                            android:id="@+id/icon_edit_current"
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:layout_marginStart="4dp"
+                            android:src="@android:drawable/ic_menu_edit"
+                            android:contentDescription="Edit current reading"
+                            android:tint="@color/design_default_color_primary" />
+                    </LinearLayout>
+
+                    <!-- Hidden field for original text_rate_type compatibility -->
                     <TextView
                         android:id="@+id/text_rate_type"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Previous: 50 → Current: 79"
-                        android:textColor="?android:attr/textColorSecondary"
-                        android:textSize="14sp"
-                        android:layout_marginBottom="8dp" />
+                        android:visibility="gone" />
 
                     <TextView
                         android:id="@+id/text_usage"

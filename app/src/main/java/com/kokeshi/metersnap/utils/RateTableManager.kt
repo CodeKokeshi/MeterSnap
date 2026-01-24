@@ -124,30 +124,63 @@ class RateTableManager(private val context: Context) {
     }
     
     /**
-     * Get the cached remote config, or null if none exists
+     * Get the cached remote config, or null if none exists.
+     * If cached data is corrupted, clears it and returns null.
      */
     fun getCachedConfig(): RemoteRateConfig? {
         val json = prefs.getString(KEY_CACHED_CONFIG, null) ?: return null
         return try {
-            gson.fromJson(json, RemoteRateConfig::class.java)
+            val config = gson.fromJson(json, RemoteRateConfig::class.java)
+            // Validate the parsed config has required fields
+            if (config?.serviceTypes.isNullOrEmpty()) {
+                Log.w(TAG, "Cached config has no service types, clearing")
+                clearCache()
+                null
+            } else {
+                config
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error parsing cached config", e)
+            Log.e(TAG, "Error parsing cached config, clearing cache", e)
+            clearCache()
             null
         }
     }
     
     /**
-     * Get the currently active config (cached remote or default hardcoded)
+     * Get the currently active config (cached remote or default hardcoded).
+     * Always returns a valid config with service types.
      */
     fun getActiveConfig(): RemoteRateConfig {
-        return getCachedConfig() ?: getDefaultConfig()
+        val cached = getCachedConfig()
+        return if (cached != null && cached.serviceTypes.isNotEmpty()) {
+            cached
+        } else {
+            getDefaultConfig()
+        }
     }
     
     /**
-     * Get the cached config version number
+     * Get the cached config version number.
+     * Handles migration from old Int storage to new Float storage.
      */
     fun getCachedConfigVersion(): Double {
-        return prefs.getFloat(KEY_CACHED_VERSION, 0f).toDouble()
+        return try {
+            prefs.getFloat(KEY_CACHED_VERSION, 0f).toDouble()
+        } catch (e: ClassCastException) {
+            // Old data was stored as Int, migrate it
+            try {
+                val oldIntValue = prefs.getInt(KEY_CACHED_VERSION, 0)
+                // Clear the old value and return the int as double
+                prefs.edit { remove(KEY_CACHED_VERSION) }
+                oldIntValue.toDouble()
+            } catch (e2: Exception) {
+                Log.e(TAG, "Error migrating config version", e2)
+                0.0
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error reading config version", e)
+            0.0
+        }
     }
     
     /**

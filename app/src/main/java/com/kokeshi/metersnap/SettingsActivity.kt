@@ -75,10 +75,22 @@ class SettingsActivity : AppCompatActivity() {
         initializeViews()
         setupToolbar()
         setupWindowInsets()
-        loadDynamicRateTypes()
-        loadSavedSettings()
+        
+        try {
+            loadDynamicRateTypes()
+            loadSavedSettings()
+            updateLastFetchedDisplay()
+        } catch (e: Exception) {
+            // If anything fails loading config, clear cache and retry with defaults
+            android.util.Log.e("SettingsActivity", "Error loading config, resetting to defaults", e)
+            rateTableManager.clearCache()
+            loadDynamicRateTypes()
+            loadSavedSettings()
+            updateLastFetchedDisplay()
+            Toast.makeText(this, "Reset to default rates due to data error", Toast.LENGTH_SHORT).show()
+        }
+        
         setupListeners()
-        updateLastFetchedDisplay()
     }
 
     private fun setupWindowInsets() {

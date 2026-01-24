@@ -15,16 +15,26 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.text.InputType
 import android.util.Log
+import android.view.LayoutInflater
 import android.widget.Button
+import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.cardview.widget.CardView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.kokeshi.metersnap.data.WaterRateType
+import com.kokeshi.metersnap.utils.BillCalculator
+import com.kokeshi.metersnap.utils.RatePreferences
+import com.kokeshi.metersnap.utils.RateTableManager
+import com.kokeshi.metersnap.utils.WaterRates
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -37,12 +47,36 @@ class BillResultActivity : AppCompatActivity() {
     private lateinit var toolbar: Toolbar
     private lateinit var textUsage: TextView
     private lateinit var textRateType: TextView
+    private lateinit var textPreviousReading: TextView
+    private lateinit var textCurrentReading: TextView
+    private lateinit var iconEditCurrent: ImageView
     private lateinit var containerTierBreakdown: LinearLayout
     private lateinit var textWaterBill: TextView
     private lateinit var textESFFee: TextView
     private lateinit var textTotalBill: TextView
     private lateinit var btnSaveToGallery: Button
     private lateinit var btnHome: Button
+    
+    // Bill data that can be recalculated
+    private var currentReading: Int = 0
+    private var previousReading: Int = 0
+    private var usage: Int = 0
+    private var rateType: String = "RESIDENTIAL"
+    private var waterBill: Double = 0.0
+    private var esfFee: Double = 0.0
+    private var totalBill: Double = 0.0
+    
+    // Tier data
+    private var tier1Usage: Int = 0
+    private var tier1Amount: Double = 0.0
+    private var tier2Usage: Int = 0
+    private var tier2Amount: Double = 0.0
+    private var tier3Usage: Int = 0
+    private var tier3Amount: Double = 0.0
+    private var tier4Usage: Int = 0
+    private var tier4Amount: Double = 0.0
+    private var tier5Usage: Int = 0
+    private var tier5Amount: Double = 0.0
 
     private val STORAGE_PERMISSION_CODE = 100
 
@@ -60,6 +94,9 @@ class BillResultActivity : AppCompatActivity() {
         toolbar = findViewById(R.id.toolbar)
         textUsage = findViewById(R.id.text_usage)
         textRateType = findViewById(R.id.text_rate_type)
+        textPreviousReading = findViewById(R.id.text_previous_reading)
+        textCurrentReading = findViewById(R.id.text_current_reading)
+        iconEditCurrent = findViewById(R.id.icon_edit_current)
         containerTierBreakdown = findViewById(R.id.container_tier_breakdown)
         textWaterBill = findViewById(R.id.text_water_bill)
         textESFFee = findViewById(R.id.text_esf_fee)
@@ -103,6 +140,164 @@ class BillResultActivity : AppCompatActivity() {
             startActivity(intent)
             finish()
         }
+        
+        // HITL: Make current reading editable
+        val editClickListener = {
+            showEditCurrentReadingDialog()
+        }
+        textCurrentReading.setOnClickListener { editClickListener() }
+        iconEditCurrent.setOnClickListener { editClickListener() }
+    }
+    
+    /**
+     * HITL (Human in the Loop) - Show dialog to edit the current reading
+     * in case the AI misread the meter.
+     */
+    private fun showEditCurrentReadingDialog() {
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("Edit Current Reading")
+        builder.setMessage("Correct the meter reading if it was misread:")
+        
+        val input = EditText(this)
+        input.inputType = InputType.TYPE_CLASS_NUMBER
+        input.setText(currentReading.toString())
+        input.setSelection(input.text.length) // Cursor at end
+        
+        // Add padding to the EditText
+        val container = android.widget.FrameLayout(this)
+        val params = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+        val margin = (16 * resources.displayMetrics.density).toInt()
+        params.leftMargin = margin
+        params.rightMargin = margin
+        params.topMargin = margin / 2
+        input.layoutParams = params
+        container.addView(input)
+        builder.setView(container)
+        
+        builder.setPositiveButton("Update") { dialog, _ ->
+            val newReadingText = input.text.toString()
+            val newReading = newReadingText.toIntOrNull()
+            
+            if (newReading == null) {
+                Toast.makeText(this, "Please enter a valid number", Toast.LENGTH_SHORT).show()
+                return@setPositiveButton
+            }
+            
+            if (newReading < previousReading) {
+                Toast.makeText(this, "Current reading must be ≥ previous ($previousReading)", Toast.LENGTH_LONG).show()
+                return@setPositiveButton
+            }
+            
+            if (newReading == currentReading) {
+                // No change
+                dialog.dismiss()
+                return@setPositiveButton
+            }
+            
+            // Update and recalculate
+            currentReading = newReading
+            recalculateBill()
+            
+            Toast.makeText(this, "Bill recalculated with corrected reading", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
+        
+        builder.setNegativeButton("Cancel") { dialog, _ ->
+            dialog.cancel()
+        }
+        
+        builder.show()
+    }
+    
+    /**
+     * Recalculate the bill based on the new current reading.
+     * Updates all UI elements in real-time.
+     */
+    private fun recalculateBill() {
+        // Calculate new usage
+        usage = currentReading - previousReading
+        
+        // Recalculate bill using the appropriate method
+        val ratePreferences = RatePreferences(this)
+        val rateTableManager = RateTableManager(this)
+        val rateTypeEnum = try {
+            WaterRateType.valueOf(rateType)
+        } catch (e: Exception) {
+            WaterRateType.RESIDENTIAL
+        }
+        
+        val customRates = ratePreferences.getCustomRates()
+        
+        // Calculate bill using dynamic method if not custom
+        val billResult: BillCalculator.BillResult = if (rateTypeEnum == WaterRateType.CUSTOM) {
+            val esfRate = ratePreferences.getESFRate()
+            BillCalculator.calculateBill(
+                usage = usage,
+                rateType = rateTypeEnum,
+                customRates = customRates,
+                esfRate = esfRate
+            )
+        } else {
+            val serviceType = rateTableManager.getServiceType(rateTypeEnum.name)
+            if (serviceType != null) {
+                BillCalculator.calculateBillDynamic(
+                    usage = usage,
+                    serviceType = serviceType,
+                    esfRate = rateTableManager.getEsfRate()
+                )
+            } else {
+                val esfRate = WaterRates.getESFForType(rateTypeEnum)
+                BillCalculator.calculateBill(
+                    usage = usage,
+                    rateType = rateTypeEnum,
+                    customRates = customRates,
+                    esfRate = esfRate
+                )
+            }
+        }
+        
+        // Update stored values
+        waterBill = billResult.waterBill
+        esfFee = billResult.esfFee
+        totalBill = billResult.totalBill
+        tier1Usage = billResult.tier1Usage
+        tier1Amount = billResult.tier1Amount
+        tier2Usage = billResult.tier2Usage
+        tier2Amount = billResult.tier2Amount
+        tier3Usage = billResult.tier3Usage
+        tier3Amount = billResult.tier3Amount
+        tier4Usage = billResult.tier4Usage
+        tier4Amount = billResult.tier4Amount
+        tier5Usage = billResult.tier5Usage
+        tier5Amount = billResult.tier5Amount
+        
+        // Update the UI
+        updateDisplay()
+        
+        Log.d("BillResult", "HITL: Recalculated bill - usage: $usage, total: $totalBill")
+    }
+    
+    /**
+     * Update all display elements with current values.
+     */
+    private fun updateDisplay() {
+        // Update readings display
+        textPreviousReading.text = previousReading.toString()
+        textCurrentReading.text = currentReading.toString()
+        
+        // Update usage
+        textUsage.text = "$usage usage"
+        
+        // Update tier breakdown
+        displayTierBreakdown()
+        
+        // Update totals
+        textWaterBill.text = String.format(Locale.US, "₱%.2f", waterBill)
+        textESFFee.text = String.format(Locale.US, "₱%.2f", esfFee)
+        textTotalBill.text = String.format(Locale.US, "₱%.2f", totalBill)
     }
 
     private fun checkStoragePermission(): Boolean {
@@ -182,14 +377,8 @@ class BillResultActivity : AppCompatActivity() {
         canvas.drawText("Bill Calculation", width / 2f, yPos, paint)
         yPos += 100f
 
-        // Get data from intent
-        val usage = intent.getIntExtra("USAGE", 0)
-        val currentReading = intent.getIntExtra("CURRENT_READING", 0)
-        val previousReading = intent.getIntExtra("PREVIOUS_READING", 0)
-        val rateType = intent.getStringExtra("RATE_TYPE") ?: "RESIDENTIAL"
-        val waterBill = intent.getDoubleExtra("WATER_BILL", 0.0)
-        val esfFee = intent.getDoubleExtra("ESF_FEE", 0.0)
-        val totalBill = intent.getDoubleExtra("TOTAL_BILL", 0.0)
+        // Use class variables (which may have been updated via HITL)
+        // Note: usage, currentReading, previousReading, rateType, waterBill, esfFee, totalBill are class fields
 
         // Usage Summary Card
         yPos = drawCard(canvas, paint, 40f, yPos, width - 80f, cardColor, textColor) {
@@ -222,23 +411,13 @@ class BillResultActivity : AppCompatActivity() {
         }
         yPos += 60f
 
-        // Water Bill Breakdown Card
+        // Water Bill Breakdown Card (use class tier variables)
         val tierData = listOf(
-            Triple(intent.getIntExtra("TIER_1_USAGE", 0),
-                   intent.getDoubleExtra("TIER_1_AMOUNT", 0.0),
-                   "1-10 usage (Min)"),
-            Triple(intent.getIntExtra("TIER_2_USAGE", 0),
-                   intent.getDoubleExtra("TIER_2_AMOUNT", 0.0),
-                   "11-20 usage"),
-            Triple(intent.getIntExtra("TIER_3_USAGE", 0),
-                   intent.getDoubleExtra("TIER_3_AMOUNT", 0.0),
-                   "21-30 usage"),
-            Triple(intent.getIntExtra("TIER_4_USAGE", 0),
-                   intent.getDoubleExtra("TIER_4_AMOUNT", 0.0),
-                   "31-40 usage"),
-            Triple(intent.getIntExtra("TIER_5_USAGE", 0),
-                   intent.getDoubleExtra("TIER_5_AMOUNT", 0.0),
-                   "41+ usage")
+            Triple(tier1Usage, tier1Amount, "1-10 usage (Min)"),
+            Triple(tier2Usage, tier2Amount, "11-20 usage"),
+            Triple(tier3Usage, tier3Amount, "21-30 usage"),
+            Triple(tier4Usage, tier4Amount, "31-40 usage"),
+            Triple(tier5Usage, tier5Amount, "41+ usage")
         ).filter { it.first > 0 }
 
         yPos = drawCard(canvas, paint, 40f, yPos, width - 80f, cardColor, textColor) {
@@ -398,19 +577,26 @@ class BillResultActivity : AppCompatActivity() {
     }
 
     private fun loadResults() {
-        val usage = intent.getIntExtra("USAGE", 0)
-        val currentReading = intent.getIntExtra("CURRENT_READING", 0)
-        val previousReading = intent.getIntExtra("PREVIOUS_READING", 0)
-        val rateType = intent.getStringExtra("RATE_TYPE") ?: "RESIDENTIAL"
-        val waterBill = intent.getDoubleExtra("WATER_BILL", 0.0)
-        val esfFee = intent.getDoubleExtra("ESF_FEE", 0.0)
-        val totalBill = intent.getDoubleExtra("TOTAL_BILL", 0.0)
-
-        // Display usage with proper formatting
-        textUsage.text = "$usage usage"
-
-        // Display readings
-        textRateType.text = "Previous: $previousReading → Current: $currentReading"
+        // Load all data from intent into class variables
+        usage = intent.getIntExtra("USAGE", 0)
+        currentReading = intent.getIntExtra("CURRENT_READING", 0)
+        previousReading = intent.getIntExtra("PREVIOUS_READING", 0)
+        rateType = intent.getStringExtra("RATE_TYPE") ?: "RESIDENTIAL"
+        waterBill = intent.getDoubleExtra("WATER_BILL", 0.0)
+        esfFee = intent.getDoubleExtra("ESF_FEE", 0.0)
+        totalBill = intent.getDoubleExtra("TOTAL_BILL", 0.0)
+        
+        // Load tier data
+        tier1Usage = intent.getIntExtra("TIER_1_USAGE", 0)
+        tier1Amount = intent.getDoubleExtra("TIER_1_AMOUNT", 0.0)
+        tier2Usage = intent.getIntExtra("TIER_2_USAGE", 0)
+        tier2Amount = intent.getDoubleExtra("TIER_2_AMOUNT", 0.0)
+        tier3Usage = intent.getIntExtra("TIER_3_USAGE", 0)
+        tier3Amount = intent.getDoubleExtra("TIER_3_AMOUNT", 0.0)
+        tier4Usage = intent.getIntExtra("TIER_4_USAGE", 0)
+        tier4Amount = intent.getDoubleExtra("TIER_4_AMOUNT", 0.0)
+        tier5Usage = intent.getIntExtra("TIER_5_USAGE", 0)
+        tier5Amount = intent.getDoubleExtra("TIER_5_AMOUNT", 0.0)
 
         // Display rate type name
         val textRateTypeName = findViewById<TextView>(R.id.text_rate_type_name)
@@ -418,42 +604,27 @@ class BillResultActivity : AppCompatActivity() {
             .split(" ").joinToString(" ") { it.replaceFirstChar { char -> char.uppercase() } }
         textRateTypeName.text = rateTypeFormatted
 
-        // Display tier breakdown
-        displayTierBreakdown()
-
-        // Display totals
-        textWaterBill.text = String.format(Locale.US, "₱%.2f", waterBill)
-        textESFFee.text = String.format(Locale.US, "₱%.2f", esfFee)
-        textTotalBill.text = String.format(Locale.US, "₱%.2f", totalBill)
+        // Update all display elements
+        updateDisplay()
     }
 
     private fun displayTierBreakdown() {
         containerTierBreakdown.removeAllViews()
 
         val tierData = listOf(
-            Triple(intent.getIntExtra("TIER_1_USAGE", 0),
-                   intent.getDoubleExtra("TIER_1_AMOUNT", 0.0),
-                   "1-10 usage (Minimum Charge)"),
-            Triple(intent.getIntExtra("TIER_2_USAGE", 0),
-                   intent.getDoubleExtra("TIER_2_AMOUNT", 0.0),
-                   "11-20 usage"),
-            Triple(intent.getIntExtra("TIER_3_USAGE", 0),
-                   intent.getDoubleExtra("TIER_3_AMOUNT", 0.0),
-                   "21-30 usage"),
-            Triple(intent.getIntExtra("TIER_4_USAGE", 0),
-                   intent.getDoubleExtra("TIER_4_AMOUNT", 0.0),
-                   "31-40 usage"),
-            Triple(intent.getIntExtra("TIER_5_USAGE", 0),
-                   intent.getDoubleExtra("TIER_5_AMOUNT", 0.0),
-                   "41+ usage")
+            Triple(tier1Usage, tier1Amount, "1-10 usage (Minimum Charge)"),
+            Triple(tier2Usage, tier2Amount, "11-20 usage"),
+            Triple(tier3Usage, tier3Amount, "21-30 usage"),
+            Triple(tier4Usage, tier4Amount, "31-40 usage"),
+            Triple(tier5Usage, tier5Amount, "41+ usage")
         )
 
         android.util.Log.d("BillResult", "Tier breakdown data: $tierData")
 
-        for ((usage, amount, label) in tierData) {
-            android.util.Log.d("BillResult", "Processing tier: $label, usage: $usage, amount: $amount")
-            if (usage > 0) {
-                val tierView = createTierView(label, usage, amount)
+        for ((tierUsage, amount, label) in tierData) {
+            android.util.Log.d("BillResult", "Processing tier: $label, usage: $tierUsage, amount: $amount")
+            if (tierUsage > 0) {
+                val tierView = createTierView(label, tierUsage, amount)
                 containerTierBreakdown.addView(tierView)
                 android.util.Log.d("BillResult", "Added tier view for $label")
             }
