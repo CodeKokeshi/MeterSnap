@@ -988,7 +988,7 @@ class BillComparisonActivity : AppCompatActivity() {
                         }
                     }
                     BillSource.USER_SCANNED -> {
-                        cardSourceBadge.setCardBackgroundColor(ContextCompat.getColor(itemView.context, android.R.color.holo_purple))
+                        cardSourceBadge.setCardBackgroundColor(ContextCompat.getColor(itemView.context, android.R.color.holo_blue_dark))
                         textSourceTitle.text = "Using Your Last-Day Scan"
                         textSourceDescription.text = "Actual reading from your end-of-month scan"
                         textConfidence.visibility = View.VISIBLE

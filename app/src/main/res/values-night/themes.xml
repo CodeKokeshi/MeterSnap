@@ -1,7 +1,18 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Base.Theme.MeterSnap" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your dark theme here. -->
-        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+        <item name="colorPrimary">@color/ms_blue_primary</item>
+        <item name="colorOnPrimary">@color/ms_blue_on_primary</item>
+        <item name="colorPrimaryContainer">@color/ms_blue_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/ms_blue_on_primary_container</item>
+        <item name="colorSecondary">@color/ms_blue_secondary</item>
+        <item name="colorOnSecondary">@color/ms_blue_on_secondary</item>
+        <item name="colorSecondaryContainer">@color/ms_blue_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/ms_blue_on_secondary_container</item>
+        <item name="colorTertiary">@color/ms_blue_tertiary</item>
+        <item name="colorOnTertiary">@color/ms_blue_on_tertiary</item>
+
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 </resources>
