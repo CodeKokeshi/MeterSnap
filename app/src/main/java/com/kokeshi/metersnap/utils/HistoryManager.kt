@@ -38,6 +38,38 @@ class HistoryManager(context: Context) {
     }
     
     /**
+     * Update an existing entry by ID, or add if not found
+     */
+    fun updateOrAddEntry(entry: ScanHistoryEntry) {
+        val history = getAllHistory().toMutableList()
+        
+        // Find and remove existing entry with same ID
+        val existingIndex = history.indexOfFirst { it.id == entry.id }
+        
+        if (existingIndex >= 0) {
+            // Update existing entry (keep same position)
+            history[existingIndex] = entry
+        } else {
+            // Add as new entry at the beginning
+            history.add(0, entry)
+            
+            // Limit history size
+            if (history.size > MAX_HISTORY_ITEMS) {
+                history.removeAt(history.size - 1)
+            }
+        }
+        
+        saveHistory(history)
+    }
+    
+    /**
+     * Check if an entry with given ID exists
+     */
+    fun hasEntry(id: String): Boolean {
+        return getAllHistory().any { it.id == id }
+    }
+    
+    /**
      * Get all history entries (newest first)
      */
     fun getAllHistory(): List<ScanHistoryEntry> {
@@ -63,6 +95,23 @@ class HistoryManager(context: Context) {
      */
     fun clearAllHistory() {
         prefs.edit().remove(KEY_HISTORY).apply()
+    }
+    
+    /**
+     * Clear history for a specific month
+     * @param monthKey Format: "yyyy-MM" (e.g., "2025-01")
+     */
+    fun clearMonthHistory(monthKey: String) {
+        val history = getAllHistory().toMutableList()
+        val monthFormat = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.getDefault())
+        
+        history.removeAll { entry ->
+            val calendar = java.util.Calendar.getInstance()
+            calendar.timeInMillis = entry.timestamp
+            monthFormat.format(calendar.time) == monthKey
+        }
+        
+        saveHistory(history)
     }
     
     /**

@@ -31,6 +31,9 @@ import com.kokeshi.metersnap.utils.BillCalculator
 import com.kokeshi.metersnap.utils.RatePreferences
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.BillCalculator.BillResult
+import com.kokeshi.metersnap.utils.ProjectedReadingManager
+import com.kokeshi.metersnap.utils.RateTableManager
+import com.kokeshi.metersnap.notifications.EndOfMonthReminderScheduler
 import org.opencv.android.OpenCVLoader
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -44,6 +47,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnTorch: ImageButton
     private lateinit var btnHelp: ImageButton
     private lateinit var btnDebugStrip: android.widget.Button
+    private lateinit var btnDebugFakePrevMonth: android.widget.Button
     private lateinit var scanLine: android.view.View
     private var tutorialOverlay: TutorialOverlay? = null
 
@@ -61,6 +65,7 @@ class MainActivity : AppCompatActivity() {
     private var isTutorialActive = false
     private lateinit var digitClassifier: DigitClassifier
     private var meterAnalyzer: MeterAnalyzer? = null
+    private lateinit var projectedReadingManager: ProjectedReadingManager
     
     // Stability Check Variables
     private var stableFrames = 0
@@ -93,6 +98,7 @@ class MainActivity : AppCompatActivity() {
         btnTorch = findViewById(R.id.btn_torch)
         btnHelp = findViewById(R.id.btn_help)
         btnDebugStrip = findViewById(R.id.btn_debug_strip)
+        btnDebugFakePrevMonth = findViewById(R.id.btn_debug_fake_prev_month)
         scanLine = findViewById(R.id.scan_line)
 
         cameraExecutor = Executors.newSingleThreadExecutor()
@@ -109,6 +115,10 @@ class MainActivity : AppCompatActivity() {
         // Initialize DigitClassifier
         digitClassifier = DigitClassifier(this)
         digitClassifier.initialize()
+        
+        // Initialize projection manager and schedule reminders
+        projectedReadingManager = ProjectedReadingManager(this)
+        EndOfMonthReminderScheduler.scheduleReminders(this)
 
         // Start scanning animation
         // startScanAnimation() // Moved to after tutorial/permissions
@@ -160,6 +170,10 @@ class MainActivity : AppCompatActivity() {
         btnDebugStrip.setOnClickListener {
             meterAnalyzer?.captureDebugNextFrame = true
             Toast.makeText(this, "Capturing debug strip...", Toast.LENGTH_SHORT).show()
+        }
+        
+        btnDebugFakePrevMonth.setOnClickListener {
+            createFakePreviousMonthScan()
         }
 
         // Check if this is the first launch
@@ -667,6 +681,79 @@ class MainActivity : AppCompatActivity() {
     }
 
     // onResume is already defined above
+    
+    /**
+     * DEBUG: Creates a fake scan history entry AND projection for the previous month.
+     * This allows testing bill comparison without waiting a real month.
+     */
+    private fun createFakePreviousMonthScan() {
+        val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
+        val cwdPrevReading = prefs.getInt("previous_reading", 2096)
+        
+        // Create a fake reading 4 units below CWD reading
+        val fakeReading = cwdPrevReading - 4
+        
+        // Calculate timestamp for end of previous month
+        val calendar = java.util.Calendar.getInstance()
+        calendar.set(java.util.Calendar.DAY_OF_MONTH, 1) // Go to 1st of current month
+        calendar.add(java.util.Calendar.DAY_OF_MONTH, -1) // Go back to last day of prev month
+        calendar.set(java.util.Calendar.HOUR_OF_DAY, 18)
+        calendar.set(java.util.Calendar.MINUTE, 0)
+        calendar.set(java.util.Calendar.SECOND, 0)
+        val prevMonthTimestamp = calendar.timeInMillis
+        val prevYear = calendar.get(java.util.Calendar.YEAR)
+        val prevMonth = calendar.get(java.util.Calendar.MONTH) + 1
+        
+        val monthFormat = java.text.SimpleDateFormat("MMM yyyy", java.util.Locale.getDefault())
+        val prevMonthName = monthFormat.format(java.util.Date(prevMonthTimestamp))
+        
+        AlertDialog.Builder(this)
+            .setTitle("Create Fake Previous Month Data")
+            .setMessage("This will create fake data for $prevMonthName:\n\n" +
+                    "• Scan Reading: $fakeReading cu.m\n" +
+                    "• Projected Month-End: $fakeReading cu.m\n" +
+                    "• CWD Previous: $cwdPrevReading cu.m\n\n" +
+                    "Difference: ${cwdPrevReading - fakeReading} cu.m\n\n" +
+                    "This enables bill comparison testing.")
+            .setPositiveButton("Create") { _, _ ->
+                // 1. Create fake scan entry with all required fields
+                val historyManager = HistoryManager(this)
+                val fakeEntry = ScanHistoryEntry(
+                    id = UUID.randomUUID().toString(),
+                    timestamp = prevMonthTimestamp,
+                    currentReading = fakeReading,
+                    previousReading = fakeReading - 10,
+                    usage = 10,
+                    rateType = "RESIDENTIAL_A",
+                    waterBill = 50.0,
+                    esfFee = 3.50,
+                    totalBill = 53.50
+                )
+                historyManager.addScanEntry(fakeEntry)
+                
+                // 2. Create fake projection for previous month
+                val fakeProjection = com.kokeshi.metersnap.data.ProjectedReading(
+                    monthYear = String.format("%04d-%02d", prevYear, prevMonth),
+                    projectedReading = fakeReading.toDouble(),
+                    lastActualReading = fakeReading,
+                    lastActualTimestamp = prevMonthTimestamp,
+                    confidenceScore = 1.0,
+                    dailyUsageRate = 0.5,
+                    dataPointsUsed = 1,
+                    rSquared = 1.0,
+                    source = com.kokeshi.metersnap.data.ProjectionSource.MANUAL_SCAN,
+                    userVerified = true,
+                    userActualReading = fakeReading
+                )
+                projectedReadingManager.saveProjection(fakeProjection)
+                
+                Toast.makeText(this, 
+                    "Created fake data for $prevMonthName:\n• Scan: $fakeReading\n• Projection: $fakeReading",
+                    Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
     private fun handleScanSuccess(result: String) {
         val currentReading = result.toIntOrNull()
@@ -714,63 +801,45 @@ class MainActivity : AppCompatActivity() {
             esfRate = esfRate
         )
         
-        // Save to history
-        saveToHistory(currentReading, previousReading, usage, rateType, billResult)
-
-        // Launch Result Activity
-        val intent = android.content.Intent(this, BillResultActivity::class.java).apply {
-            putExtra("USAGE", usage)
-            putExtra("CURRENT_READING", currentReading)
-            putExtra("PREVIOUS_READING", previousReading)
-            putExtra("RATE_TYPE", rateType.name)
-            putExtra("WATER_BILL", billResult.waterBill)
-            putExtra("ESF_FEE", billResult.esfFee)
-            putExtra("TOTAL_BILL", billResult.totalBill)
-            
-            // Add tier details
-            putExtra("TIER_1_USAGE", billResult.tier1Usage)
-            putExtra("TIER_1_AMOUNT", billResult.tier1Amount)
-            putExtra("TIER_2_USAGE", billResult.tier2Usage)
-            putExtra("TIER_2_AMOUNT", billResult.tier2Amount)
-            putExtra("TIER_3_USAGE", billResult.tier3Usage)
-            putExtra("TIER_3_AMOUNT", billResult.tier3Amount)
-            putExtra("TIER_4_USAGE", billResult.tier4Usage)
-            putExtra("TI_RATE_TYPEER_4_AMOUNT", billResult.tier4Amount)
-            putExtra("TIER_5_USAGE", billResult.tier5Usage)
-            putExtra("TIER_5_AMOUNT", billResult.tier5Amount)
+        // DON'T save to history here - let destination activity handle it to prevent duplicates
+        
+        // Check if we have a predicted previous reading available
+        val appPredictedPreviousReading = projectedReadingManager.getAppPredictedPreviousReading()
+        
+        if (appPredictedPreviousReading != null && appPredictedPreviousReading != previousReading) {
+            // Navigate to BillComparisonActivity (will save to history on exit)
+            val intent = android.content.Intent(this, BillComparisonActivity::class.java).apply {
+                putExtra("CURRENT_READING", currentReading)
+                putExtra("PREVIOUS_READING", previousReading)
+                putExtra("RATE_TYPE", rateType.name)
+            }
+            startActivity(intent)
+        } else {
+            // Launch BillResultActivity (will save to history on exit)
+            val intent = android.content.Intent(this, BillResultActivity::class.java).apply {
+                putExtra("USAGE", usage)
+                putExtra("CURRENT_READING", currentReading)
+                putExtra("PREVIOUS_READING", previousReading)
+                putExtra("RATE_TYPE", rateType.name)
+                putExtra("WATER_BILL", billResult.waterBill)
+                putExtra("ESF_FEE", billResult.esfFee)
+                putExtra("TOTAL_BILL", billResult.totalBill)
+                
+                // Add tier details
+                putExtra("TIER_1_USAGE", billResult.tier1Usage)
+                putExtra("TIER_1_AMOUNT", billResult.tier1Amount)
+                putExtra("TIER_2_USAGE", billResult.tier2Usage)
+                putExtra("TIER_2_AMOUNT", billResult.tier2Amount)
+                putExtra("TIER_3_USAGE", billResult.tier3Usage)
+                putExtra("TIER_3_AMOUNT", billResult.tier3Amount)
+                putExtra("TIER_4_USAGE", billResult.tier4Usage)
+                putExtra("TIER_4_AMOUNT", billResult.tier4Amount)
+                putExtra("TIER_5_USAGE", billResult.tier5Usage)
+                putExtra("TIER_5_AMOUNT", billResult.tier5Amount)
+            }
+            startActivity(intent)
         }
-        startActivity(intent)
     }
     
-    private fun saveToHistory(
-        currentReading: Int,
-        previousReading: Int,
-        usage: Int,
-        rateType: WaterRateType,
-        billResult: BillResult
-    ) {
-        val historyManager = HistoryManager(this)
-        val entry = ScanHistoryEntry(
-            id = UUID.randomUUID().toString(),
-            timestamp = System.currentTimeMillis(),
-            currentReading = currentReading,
-            previousReading = previousReading,
-            usage = usage,
-            rateType = rateType.name,
-            waterBill = billResult.waterBill,
-            esfFee = billResult.esfFee,
-            totalBill = billResult.totalBill,
-            tier1Usage = billResult.tier1Usage,
-            tier1Amount = billResult.tier1Amount,
-            tier2Usage = billResult.tier2Usage,
-            tier2Amount = billResult.tier2Amount,
-            tier3Usage = billResult.tier3Usage,
-            tier3Amount = billResult.tier3Amount,
-            tier4Usage = billResult.tier4Usage,
-            tier4Amount = billResult.tier4Amount,
-            tier5Usage = billResult.tier5Usage,
-            tier5Amount = billResult.tier5Amount
-        )
-        historyManager.addScanEntry(entry)
-    }
+    // saveToHistory removed - now handled by destination activities
 }

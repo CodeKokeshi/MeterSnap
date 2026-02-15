@@ -3,19 +3,26 @@ package com.kokeshi.metersnap
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import android.widget.Button
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.textfield.TextInputEditText
 import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
 import com.kokeshi.metersnap.data.ScanHistoryEntry
+import com.kokeshi.metersnap.notifications.EndOfMonthReminderScheduler
 import com.kokeshi.metersnap.utils.BillCalculator
 import com.kokeshi.metersnap.utils.RatePreferences
 import com.kokeshi.metersnap.utils.RateTableManager
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.BillCalculator.BillResult
+import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import java.util.UUID
 
 class ManualInputActivity : AppCompatActivity() {
@@ -26,16 +33,20 @@ class ManualInputActivity : AppCompatActivity() {
     private lateinit var btnCalculate: Button
     private lateinit var ratePreferences: RatePreferences
     private lateinit var rateTableManager: RateTableManager
+    private lateinit var projectedReadingManager: ProjectedReadingManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContentView(R.layout.activity_manual_input)
 
         ratePreferences = RatePreferences(this)
         rateTableManager = RateTableManager(this)
+        projectedReadingManager = ProjectedReadingManager(this)
         
         initializeViews()
         setupToolbar()
+        setupWindowInsets()
         setupListeners()
         
         // Auto-populate previous reading
@@ -43,6 +54,28 @@ class ManualInputActivity : AppCompatActivity() {
         val previousReading = prefs.getInt("previous_reading", -1)
         if (previousReading != -1) {
             editPreviousReading.setText(previousReading.toString())
+        }
+    }
+    
+    private fun setupWindowInsets() {
+        // Apply status bar inset to toolbar only
+        ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
+            val statusBarInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(
+                view.paddingLeft,
+                statusBarInsets.top,
+                view.paddingRight,
+                view.paddingBottom
+            )
+            windowInsets
+        }
+
+        // Apply navigation bar inset to root
+        val rootView = findViewById<View>(R.id.root_layout)
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
+            val systemBars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(0, 0, 0, systemBars.bottom)
+            windowInsets
         }
     }
 
@@ -144,9 +177,48 @@ class ManualInputActivity : AppCompatActivity() {
             }
         }
         
-        // Save to history
-        saveToHistory(currentReading, previousReading, usage, rateType, billResult)
+        // DON'T save to history here - let the destination activity handle it
+        // This prevents duplicate entries
 
+        // Check if we have a predicted previous reading available
+        val appPredictedPreviousReading = projectedReadingManager.getAppPredictedPreviousReading()
+        
+        if (appPredictedPreviousReading != null && appPredictedPreviousReading != previousReading) {
+            // Auto-navigate to bill comparison (will save to history on exit)
+            navigateToBillComparison(currentReading, previousReading, rateType)
+        } else {
+            // Navigate to results screen (will save to history on exit)
+            navigateToBillResult(currentReading, previousReading, rateType, billResult)
+        }
+    }
+    
+    /**
+     * Navigate to bill comparison activity (dual view)
+     */
+    private fun navigateToBillComparison(
+        currentReading: Int,
+        previousReading: Int,
+        rateType: WaterRateType
+    ) {
+        val intent = Intent(this, BillComparisonActivity::class.java).apply {
+            putExtra("CURRENT_READING", currentReading)
+            putExtra("PREVIOUS_READING", previousReading)
+            putExtra("RATE_TYPE", rateType.name)
+        }
+        startActivity(intent)
+    }
+    
+    /**
+     * Navigate to standard bill result activity
+     */
+    private fun navigateToBillResult(
+        currentReading: Int,
+        previousReading: Int,
+        rateType: WaterRateType,
+        billResult: BillResult
+    ) {
+        val usage = currentReading - previousReading
+        
         // Navigate to results screen
         val intent = Intent(this, BillResultActivity::class.java).apply {
             putExtra("USAGE", usage)
@@ -170,37 +242,7 @@ class ManualInputActivity : AppCompatActivity() {
         startActivity(intent)
     }
     
-    private fun saveToHistory(
-        currentReading: Int,
-        previousReading: Int,
-        usage: Int,
-        rateType: WaterRateType,
-        billResult: BillResult
-    ) {
-        val historyManager = HistoryManager(this)
-        val entry = ScanHistoryEntry(
-            id = UUID.randomUUID().toString(),
-            timestamp = System.currentTimeMillis(),
-            currentReading = currentReading,
-            previousReading = previousReading,
-            usage = usage,
-            rateType = rateType.name,
-            waterBill = billResult.waterBill,
-            esfFee = billResult.esfFee,
-            totalBill = billResult.totalBill,
-            tier1Usage = billResult.tier1Usage,
-            tier1Amount = billResult.tier1Amount,
-            tier2Usage = billResult.tier2Usage,
-            tier2Amount = billResult.tier2Amount,
-            tier3Usage = billResult.tier3Usage,
-            tier3Amount = billResult.tier3Amount,
-            tier4Usage = billResult.tier4Usage,
-            tier4Amount = billResult.tier4Amount,
-            tier5Usage = billResult.tier5Usage,
-            tier5Amount = billResult.tier5Amount
-        )
-        historyManager.addScanEntry(entry)
-    }
+    // saveToHistory removed - now handled by destination activities
 
     override fun onSupportNavigateUp(): Boolean {
         onBackPressed()

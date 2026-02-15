@@ -18,27 +18,35 @@ import android.provider.MediaStore
 import android.text.InputType
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.cardview.widget.CardView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
+import com.kokeshi.metersnap.data.ScanHistoryEntry
 import com.kokeshi.metersnap.utils.BillCalculator
+import com.kokeshi.metersnap.utils.HistoryManager
+import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.utils.RatePreferences
 import com.kokeshi.metersnap.utils.RateTableManager
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.text.SimpleDateFormat
+import java.util.UUID
 import java.util.Date
 import java.util.Locale
 
@@ -77,17 +85,63 @@ class BillResultActivity : AppCompatActivity() {
     private var tier4Amount: Double = 0.0
     private var tier5Usage: Int = 0
     private var tier5Amount: Double = 0.0
+    
+    // Flag to indicate if viewing from history
+    private var isFromHistory: Boolean = false
+    
+    // Session tracking for history - prevents duplicates
+    private var sessionId: String = UUID.randomUUID().toString()
+    private var historySaved: Boolean = false
+    
+    // Managers
+    private lateinit var historyManager: HistoryManager
+    private lateinit var projectedReadingManager: ProjectedReadingManager
 
     private val STORAGE_PERMISSION_CODE = 100
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContentView(R.layout.activity_bill_result)
 
+        historyManager = HistoryManager(this)
+        projectedReadingManager = ProjectedReadingManager(this)
+        
         initializeViews()
         setupToolbar()
+        setupWindowInsets()
         loadResults()
         setupListeners()
+    }
+    
+    override fun onPause() {
+        super.onPause()
+        // Auto-save to history when leaving (but only once, and not if from history)
+        if (!historySaved && !isFromHistory) {
+            saveToHistory()
+        }
+    }
+    
+    private fun setupWindowInsets() {
+        // Apply status bar inset to toolbar only
+        ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
+            val statusBarInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(
+                view.paddingLeft,
+                statusBarInsets.top,
+                view.paddingRight,
+                view.paddingBottom
+            )
+            windowInsets
+        }
+
+        // Apply navigation bar inset to root
+        val rootView = findViewById<View>(R.id.root_layout)
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
+            val systemBars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(0, 0, 0, systemBars.bottom)
+            windowInsets
+        }
     }
 
     private fun initializeViews() {
@@ -585,6 +639,21 @@ class BillResultActivity : AppCompatActivity() {
         waterBill = intent.getDoubleExtra("WATER_BILL", 0.0)
         esfFee = intent.getDoubleExtra("ESF_FEE", 0.0)
         totalBill = intent.getDoubleExtra("TOTAL_BILL", 0.0)
+        isFromHistory = intent.getBooleanExtra("FROM_HISTORY", false)
+        
+        // Handle session ID for history tracking
+        if (isFromHistory) {
+            sessionId = intent.getStringExtra("HISTORY_ID") ?: sessionId
+            historySaved = true // Already in history
+        } else {
+            sessionId = UUID.randomUUID().toString()
+            historySaved = false
+        }
+        
+        // Calculate usage if not provided
+        if (usage == 0 && currentReading > 0 && previousReading > 0) {
+            usage = currentReading - previousReading
+        }
         
         // Load tier data
         tier1Usage = intent.getIntExtra("TIER_1_USAGE", 0)
@@ -597,6 +666,9 @@ class BillResultActivity : AppCompatActivity() {
         tier4Amount = intent.getDoubleExtra("TIER_4_AMOUNT", 0.0)
         tier5Usage = intent.getIntExtra("TIER_5_USAGE", 0)
         tier5Amount = intent.getDoubleExtra("TIER_5_AMOUNT", 0.0)
+        
+        // Update toolbar title based on source
+        supportActionBar?.title = if (isFromHistory) "Bill Details" else "Bill Calculation"
 
         // Display rate type name
         val textRateTypeName = findViewById<TextView>(R.id.text_rate_type_name)
@@ -688,10 +760,49 @@ class BillResultActivity : AppCompatActivity() {
 
         return cardView
     }
+    
+    /**
+     * Save the current bill to history.
+     * Uses sessionId to prevent duplicates (update if exists).
+     */
+    private fun saveToHistory() {
+        if (isFromHistory) {
+            Log.d("BillResult", "Skipping history save - viewing from history")
+            return
+        }
+        
+        val entry = ScanHistoryEntry(
+            id = sessionId,
+            timestamp = System.currentTimeMillis(),
+            currentReading = currentReading,
+            previousReading = previousReading,
+            usage = usage,
+            rateType = rateType,
+            waterBill = waterBill,
+            esfFee = esfFee,
+            totalBill = totalBill,
+            tier1Usage = tier1Usage,
+            tier1Amount = tier1Amount,
+            tier2Usage = tier2Usage,
+            tier2Amount = tier2Amount,
+            tier3Usage = tier3Usage,
+            tier3Amount = tier3Amount,
+            tier4Usage = tier4Usage,
+            tier4Amount = tier4Amount,
+            tier5Usage = tier5Usage,
+            tier5Amount = tier5Amount,
+            hasComparison = false // BillResultActivity is only used when no comparison
+        )
+        
+        historyManager.updateOrAddEntry(entry)
+        projectedReadingManager.recordActualMonthEndReading(currentReading)
+        
+        historySaved = true
+        Log.d("BillResult", "History saved with sessionId=$sessionId")
+    }
 
     override fun onSupportNavigateUp(): Boolean {
         onBackPressedDispatcher.onBackPressed()
         return true
     }
 }
-

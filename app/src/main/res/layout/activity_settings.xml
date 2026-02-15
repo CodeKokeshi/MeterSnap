@@ -1,308 +1,75 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root_layout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true"
+    android:orientation="vertical"
     android:background="?android:attr/colorBackground">
 
+    <!-- Toolbar -->
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="?attr/actionBarSize"
+        android:background="?android:attr/colorBackground"
+        android:elevation="4dp"
+        app:contentInsetStartWithNavigation="0dp"
+        app:navigationIcon="?attr/homeAsUpIndicator"
+        app:title="Settings"
+        app:titleTextColor="?android:attr/textColorPrimary"
+        app:titleMarginStart="8dp" />
+
+    <!-- Navigation Buttons Container -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="0dp">
+        android:padding="16dp">
 
-        <!-- Toolbar -->
-        <androidx.appcompat.widget.Toolbar
-            android:id="@+id/toolbar"
+        <!-- History and Readings Button -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_history_readings"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:minHeight="?attr/actionBarSize"
-            android:background="?android:attr/colorBackground"
-            android:elevation="4dp"
-            android:fitsSystemWindows="true"
-            android:paddingBottom="8dp"
-            app:contentInsetStartWithNavigation="0dp"
-            app:navigationIcon="?attr/homeAsUpIndicator"
-            app:title="Settings"
-            app:titleTextColor="?android:attr/textColorPrimary"
-            app:titleMarginStart="8dp" />
-
-        <!-- Previous Reading Section -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_margin="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Previous Reading"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginTop="8dp">
-
-                    <TextView
-                        android:id="@+id/text_previous_reading"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Not Set"
-                        android:textSize="24sp"
-                        android:textStyle="bold"
-                        android:textColor="@android:color/holo_blue_dark" />
-
-                    <Button
-                        android:id="@+id/btn_edit_previous_reading"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Edit"
-                        style="@style/Widget.MaterialComponents.Button.TextButton"/>
-                </LinearLayout>
-                
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Used to calculate your bill (Current - Previous)"
-                    android:textSize="12sp"
-                    android:textColor="?android:attr/textColorSecondary"/>
-                
-                <!-- History Logs Button -->
-                <Button
-                    android:id="@+id/btn_history_logs"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="History Logs"
-                    android:textColor="@android:color/white"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:background="@drawable/history_button_bg"
-                    android:paddingVertical="12dp"
-                    style="?android:attr/borderlessButtonStyle"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- Rate Type Section -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_margin="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Water Rate Type"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="January 2025 - Carmona Water District"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:textSize="12sp"
-                    android:textStyle="italic" />
-
-                <Spinner
-                    android:id="@+id/spinner_rate_type"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:minHeight="48dp"
-                    android:padding="8dp"
-                    android:spinnerMode="dropdown" />
-                
-                <!-- Update Rate Table Button -->
-                <Button
-                    android:id="@+id/btn_update_rates"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="Fetch Latest Rate Table"
-                    android:textColor="@android:color/white"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:background="@drawable/history_button_bg"
-                    android:paddingVertical="12dp"
-                    style="?android:attr/borderlessButtonStyle"/>
-                
-                <!-- Last Updated Info -->
-                <TextView
-                    android:id="@+id/text_last_updated"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="Using default rates"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:textSize="11sp"
-                    android:gravity="center"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- Rate Tiers Section -->
-        <androidx.cardview.widget.CardView
-            android:id="@+id/card_rate_tiers"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Rate Tiers"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/text_rates_subtitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="Current rates per cubic meter"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:textSize="12sp" />
-
-                <!-- Rate Tiers Container -->
-                <LinearLayout
-                    android:id="@+id/container_rate_tiers"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:orientation="vertical">
-                    <!-- Rate tier items will be added dynamically -->
-                </LinearLayout>
-
-                <!-- Edit Custom Rates Button (only visible for custom) -->
-                <Button
-                    android:id="@+id/btn_edit_custom_rates"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="Edit Custom Rates"
-                    android:visibility="gone" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- ESF Rate Section -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Environmental Service Fee (ESF)"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="Rate per cubic meter (editable for Custom Settings only)"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:textSize="12sp" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="₱"
-                        android:textColor="?android:attr/textColorPrimary"
-                        android:textSize="18sp"
-                        android:layout_marginEnd="8dp" />
-
-                    <TextView
-                        android:id="@+id/text_esf_rate"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="3.50"
-                        android:textColor="?android:attr/textColorPrimary"
-                        android:textSize="18sp"
-                        android:textStyle="bold" />
-
-                    <Button
-                        android:id="@+id/btn_edit_esf"
-                        style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Edit"
-                        android:visibility="gone" />
-                </LinearLayout>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- Save Button -->
-        <Button
-            android:id="@+id/btn_save_settings"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_margin="16dp"
-            android:padding="16dp"
-            android:text="Save Settings"
+            android:text="History and Readings"
             android:textSize="16sp"
-            android:textStyle="bold" />
+            android:padding="16dp"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            app:icon="@drawable/ic_history"
+            app:iconGravity="start"
+            app:iconPadding="12dp"/>
 
-        <!-- Bottom spacer to prevent navigation buttons from covering content -->
-        <View
+        <!-- Rate Configuration Button -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_rate_config"
             android:layout_width="match_parent"
-            android:layout_height="80dp" />
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Rate Configuration"
+            android:textSize="16sp"
+            android:padding="16dp"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            app:icon="@drawable/ic_rates"
+            app:iconGravity="start"
+            app:iconPadding="12dp"/>
+
+        <!-- Other Options Button -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_other_options"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Other Options"
+            android:textSize="16sp"
+            android:padding="16dp"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            app:icon="@drawable/ic_more_options"
+            app:iconGravity="start"
+            app:iconPadding="12dp"/>
+
     </LinearLayout>
-</ScrollView>
+
+</LinearLayout>
 

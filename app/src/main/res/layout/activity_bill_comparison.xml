@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root_layout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?android:attr/colorBackground">
+
+    <!-- Toolbar -->
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="?attr/actionBarSize"
+        android:background="?android:attr/colorBackground"
+        android:elevation="4dp"
+        android:paddingBottom="8dp"
+        app:contentInsetStartWithNavigation="0dp"
+        app:navigationIcon="?attr/homeAsUpIndicator"
+        app:title="Bill Comparison"
+        app:titleTextColor="?android:attr/textColorPrimary"
+        app:titleMarginStart="8dp" />
+
+    <!-- Tab Layout for CWD vs App Predicted -->
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tab_layout_bill_source"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?android:attr/colorBackground"
+        app:tabIndicatorColor="@color/design_default_color_primary"
+        app:tabSelectedTextColor="@color/design_default_color_primary"
+        app:tabTextColor="?android:attr/textColorSecondary"
+        app:tabMode="fixed"
+        app:tabGravity="fill">
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="CWD Reading" />
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="App Predicted" />
+
+    </com.google.android.material.tabs.TabLayout>
+
+    <!-- ViewPager for swiping between bill calculations -->
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/view_pager_bills"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+</LinearLayout>

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root_layout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -14,7 +15,6 @@
         android:minHeight="?attr/actionBarSize"
         android:background="?android:attr/colorBackground"
         android:elevation="4dp"
-        android:fitsSystemWindows="true"
         android:paddingBottom="8dp"
         app:contentInsetStartWithNavigation="0dp"
         app:navigationIcon="?attr/homeAsUpIndicator"
@@ -26,18 +26,35 @@
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler_history"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:padding="16dp"
+        android:paddingBottom="80dp"
         android:clipToPadding="false" />
 
     <!-- Empty State -->
     <TextView
         android:id="@+id/text_empty_history"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:gravity="center"
         android:text="No scan history yet.\n\nSuccessful scans will appear here."
         android:textSize="16sp"
         android:textColor="?android:attr/textColorSecondary"
+        android:visibility="gone" />
+
+    <!-- Clear History Button -->
+    <Button
+        android:id="@+id/btn_clear_history"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:padding="16dp"
+        android:text="Clear History Logs"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:backgroundTint="#D32F2F"
+        android:textColor="@android:color/white"
         android:visibility="gone" />
 </LinearLayout>
