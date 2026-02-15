@@ -176,6 +176,9 @@ class MainActivity : AppCompatActivity() {
             createFakePreviousMonthScan()
         }
 
+        // Apply developer settings for debug buttons visibility
+        applyDeveloperSettings()
+
         // Check if this is the first launch
         checkAndShowTutorial()
     }
@@ -202,6 +205,9 @@ class MainActivity : AppCompatActivity() {
         tvInstructions?.setTextColor(android.graphics.Color.WHITE)
         
         android.util.Log.d("MainActivity", "onResume: Reset state, previous reading = $currentPreviousReading")
+        
+        // Refresh developer settings (debug button visibility)
+        applyDeveloperSettings()
     }
     
     override fun onPause() {
@@ -556,8 +562,14 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
         val previousReadingSet = prefs.getBoolean(PREF_PREVIOUS_READING_SET, false)
         val tutorialCompleted = prefs.getBoolean(PREF_TUTORIAL_COMPLETED, false)
+        val chargeDateSet = prefs.getBoolean("charge_date_set", false)
         
-        if (!previousReadingSet) {
+        if (!chargeDateSet) {
+            // First run: Ask for charge date first
+            findViewById<android.view.View>(R.id.main).postDelayed({
+                showChargeDateDialog()
+            }, 500)
+        } else if (!previousReadingSet) {
             // First run: Ask for previous reading
             findViewById<android.view.View>(R.id.main).postDelayed({
                 showPreviousReadingDialog()
@@ -678,6 +690,79 @@ class MainActivity : AppCompatActivity() {
         if (::digitClassifier.isInitialized) {
             digitClassifier.close()
         }
+    }
+
+    /**
+     * Apply developer settings to control debug button visibility.
+     * Reads from SharedPreferences set in OtherOptionsActivity's Developer Settings.
+     */
+    private fun applyDeveloperSettings() {
+        val devPrefs = getSharedPreferences("developer_settings", Context.MODE_PRIVATE)
+        val debugStripEnabled = devPrefs.getBoolean("debug_strip_enabled", false)
+        val fakePrevEnabled = devPrefs.getBoolean("fake_prev_enabled", false)
+        
+        btnDebugStrip.visibility = if (debugStripEnabled) android.view.View.VISIBLE else android.view.View.GONE
+        btnDebugStrip.isClickable = debugStripEnabled
+        
+        btnDebugFakePrevMonth.visibility = if (fakePrevEnabled) android.view.View.VISIBLE else android.view.View.GONE
+        btnDebugFakePrevMonth.isClickable = fakePrevEnabled
+    }
+
+    /**
+     * Show dialog to select CWD charge date (1-28) during initial setup.
+     */
+    private fun showChargeDateDialog() {
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("Welcome to MeterSnap")
+        builder.setMessage("First, let's set up your CWD billing cycle.\n\nWhat day of the month does your CWD bill charge date fall on?\n\nThis is the date shown on your CWD receipt (e.g., if your receipt says \"January 21\", enter 21).")
+        
+        val container = FrameLayout(this)
+        val innerLayout = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val margin = (16 * resources.displayMetrics.density).toInt()
+            layoutParams = FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                leftMargin = margin
+                rightMargin = margin
+            }
+        }
+        
+        val numberPicker = android.widget.NumberPicker(this).apply {
+            minValue = 1
+            maxValue = 28
+            value = 28
+            wrapSelectorWheel = true
+        }
+        innerLayout.addView(numberPicker)
+        
+        val helpText = android.widget.TextView(this).apply {
+            text = "Select a day between 1 and 28"
+            textSize = 12f
+            setTextColor(resources.getColor(android.R.color.darker_gray, null))
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, (8 * resources.displayMetrics.density).toInt(), 0, 0)
+        }
+        innerLayout.addView(helpText)
+        container.addView(innerLayout)
+        builder.setView(container)
+        
+        builder.setPositiveButton("Save") { _, _ ->
+            val chargeDate = numberPicker.value
+            val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putInt("charge_date", chargeDate)
+                .putBoolean("charge_date_set", true)
+                .apply()
+            Toast.makeText(this, "Charge date set to day $chargeDate of each month", Toast.LENGTH_SHORT).show()
+            
+            // Continue to previous reading dialog
+            showPreviousReadingDialog()
+        }
+        
+        builder.setCancelable(false)
+        builder.show()
     }
 
     // onResume is already defined above

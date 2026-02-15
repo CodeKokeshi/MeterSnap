@@ -113,6 +113,21 @@ class HistoryManager(context: Context) {
         
         saveHistory(history)
     }
+
+    /**
+     * Clear history for a specific billing period (using charge date).
+     * @param periodKey Format: "yyyy-MM" (e.g., "2025-01") - the billing period
+     * @param chargeDate The user's charge date (1-28)
+     */
+    fun clearBillingPeriodHistory(periodKey: String, chargeDate: Int) {
+        val history = getAllHistory().toMutableList()
+        
+        history.removeAll { entry ->
+            ChargeDateHelper.getBillingPeriodKey(entry.timestamp, chargeDate) == periodKey
+        }
+        
+        saveHistory(history)
+    }
     
     /**
      * Delete a specific entry

@@ -19,6 +19,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.kokeshi.metersnap.data.ScanHistoryEntry
+import com.kokeshi.metersnap.utils.ChargeDateHelper
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import java.text.SimpleDateFormat
@@ -30,9 +31,13 @@ class HistoryActivity : AppCompatActivity() {
     private lateinit var recyclerView: RecyclerView
     private lateinit var emptyView: TextView
     private lateinit var btnClearHistory: Button
+    private lateinit var btnSort: ImageButton
     private lateinit var historyManager: HistoryManager
     private lateinit var projectedReadingManager: ProjectedReadingManager
     private lateinit var adapter: GroupedHistoryAdapter
+    
+    // true = most recent month first (default), false = oldest month first
+    private var sortDescending: Boolean = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,6 +81,7 @@ class HistoryActivity : AppCompatActivity() {
         recyclerView = findViewById(R.id.recycler_history)
         emptyView = findViewById(R.id.text_empty_history)
         btnClearHistory = findViewById(R.id.btn_clear_history)
+        btnSort = findViewById(R.id.btn_sort)
 
         recyclerView.layoutManager = LinearLayoutManager(this)
     }
@@ -128,27 +134,43 @@ class HistoryActivity : AppCompatActivity() {
     }
     
     /**
-     * Group history entries by month and create display items
+     * Group history entries by billing period (using charge date) and create display items.
+     * If charge date is set, groups by billing cycle; otherwise falls back to calendar month.
      */
     private fun groupHistoryByMonth(history: List<ScanHistoryEntry>): List<HistoryListItem> {
         val items = mutableListOf<HistoryListItem>()
-        val monthFormat = SimpleDateFormat("yyyy-MM", Locale.getDefault())
-        val displayFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+        val chargeDate = ChargeDateHelper.getChargeDate(this)
+        val chargeDateSet = ChargeDateHelper.isChargeDateSet(this)
         
-        // Group entries by month
+        // Group entries by billing period
         val groupedByMonth = history.groupBy { entry ->
-            val calendar = Calendar.getInstance()
-            calendar.timeInMillis = entry.timestamp
-            monthFormat.format(calendar.time)
+            if (chargeDateSet) {
+                ChargeDateHelper.getBillingPeriodKey(entry.timestamp, chargeDate)
+            } else {
+                val calendar = Calendar.getInstance()
+                calendar.timeInMillis = entry.timestamp
+                SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(calendar.time)
+            }
         }
         
-        // Convert to list items with headers
-        for ((monthKey, entries) in groupedByMonth) {
-            // Create header
-            val firstEntry = entries.first()
-            val calendar = Calendar.getInstance()
-            calendar.timeInMillis = firstEntry.timestamp
-            val monthDisplay = displayFormat.format(calendar.time)
+        // Convert to list items with headers, sorted by month key
+        val sortedKeys = if (sortDescending) {
+            groupedByMonth.keys.sortedDescending()
+        } else {
+            groupedByMonth.keys.sorted()
+        }
+        
+        for (monthKey in sortedKeys) {
+            val entries = groupedByMonth[monthKey] ?: continue
+            val monthDisplay = if (chargeDateSet) {
+                ChargeDateHelper.getBillingPeriodDisplay(monthKey, chargeDate)
+            } else {
+                val displayFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+                val firstEntry = entries.first()
+                val calendar = Calendar.getInstance()
+                calendar.timeInMillis = firstEntry.timestamp
+                displayFormat.format(calendar.time)
+            }
             
             // Calculate month summary
             val totalUsage = entries.sumOf { it.usage }
@@ -174,6 +196,11 @@ class HistoryActivity : AppCompatActivity() {
         btnClearHistory.setOnClickListener {
             showClearHistoryDialog()
         }
+        
+        btnSort.setOnClickListener {
+            sortDescending = !sortDescending
+            loadHistory()
+        }
     }
     
     private fun showClearHistoryDialog() {
@@ -196,14 +223,20 @@ class HistoryActivity : AppCompatActivity() {
     }
     
     private fun showClearMonthDialog(monthKey: String) {
-        // Parse monthKey to get display name
-        val monthFormat = SimpleDateFormat("yyyy-MM", Locale.getDefault())
-        val displayFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
-        val monthDisplay = try {
-            val date = monthFormat.parse(monthKey)
-            if (date != null) displayFormat.format(date) else monthKey
-        } catch (e: Exception) {
-            monthKey
+        val chargeDateSet = ChargeDateHelper.isChargeDateSet(this)
+        val chargeDate = ChargeDateHelper.getChargeDate(this)
+        
+        val monthDisplay = if (chargeDateSet) {
+            ChargeDateHelper.getMonthDisplayName(monthKey)
+        } else {
+            val monthFormat = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+            val displayFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+            try {
+                val date = monthFormat.parse(monthKey)
+                if (date != null) displayFormat.format(date) else monthKey
+            } catch (e: Exception) {
+                monthKey
+            }
         }
         
         AlertDialog.Builder(this)
@@ -218,9 +251,15 @@ class HistoryActivity : AppCompatActivity() {
     }
     
     private fun clearMonthHistory(monthKey: String) {
-        historyManager.clearMonthHistory(monthKey)
+        val chargeDateSet = ChargeDateHelper.isChargeDateSet(this)
+        if (chargeDateSet) {
+            val chargeDate = ChargeDateHelper.getChargeDate(this)
+            historyManager.clearBillingPeriodHistory(monthKey, chargeDate)
+        } else {
+            historyManager.clearMonthHistory(monthKey)
+        }
         loadHistory()
-        Toast.makeText(this, "Month history cleared", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Period history cleared", Toast.LENGTH_SHORT).show()
     }
 
     private fun openBillBreakdown(entry: ScanHistoryEntry) {

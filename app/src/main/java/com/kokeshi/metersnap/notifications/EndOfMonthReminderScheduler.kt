@@ -7,21 +7,24 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
 import android.util.Log
+import com.kokeshi.metersnap.utils.ChargeDateHelper
 import java.util.*
 
 /**
- * Schedules and manages end-of-month scan reminder notifications.
+ * Schedules and manages end-of-billing-period scan reminder notifications.
+ * 
+ * Uses the user's configured CWD charge date instead of calendar month end.
  * 
  * ## Reminder Schedule:
- * - 3 days before month end: "Month end approaching" (gentle reminder)
- * - 1 day before month end: "Tomorrow is the last day" (medium priority)
- * - Last day of month (morning 9 AM): "Last day! Scan now" (high priority)
- * - Last day of month (evening 6 PM): Final reminder if not scanned
+ * - 3 days before charge date: "Billing period ending soon" (gentle reminder)
+ * - 1 day before charge date: "Tomorrow is charge date" (medium priority)
+ * - Charge date (morning 9 AM): "Charge date! Scan now" (high priority)
+ * - Charge date (evening 6 PM): Final reminder if not scanned
  * 
  * ## User Preferences:
  * - Enable/disable reminders
  * - Customize reminder times
- * - Dismiss until next month
+ * - Dismiss until next period
  */
 object EndOfMonthReminderScheduler {
     
@@ -40,7 +43,8 @@ object EndOfMonthReminderScheduler {
     private const val REQUEST_CODE_LAST_DAY_EVENING = 3004
     
     /**
-     * Schedule all end-of-month reminders for the current month.
+     * Schedule all reminders based on the user's charge date.
+     * Uses charge date as the "end of billing period" instead of calendar month end.
      */
     fun scheduleReminders(context: Context) {
         val prefs = getPrefs(context)
@@ -53,23 +57,41 @@ object EndOfMonthReminderScheduler {
         // Cancel any existing alarms first
         cancelAllReminders(context)
         
+        val chargeDate = ChargeDateHelper.getChargeDate(context)
+        
         val calendar = Calendar.getInstance()
         val currentMonth = calendar.get(Calendar.MONTH)
         val currentYear = calendar.get(Calendar.YEAR)
-        val lastDayOfMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val currentDay = calendar.get(Calendar.DAY_OF_MONTH)
         
-        Log.d(TAG, "Scheduling reminders for $currentYear-${currentMonth + 1}, today is day $currentDay, last day is $lastDayOfMonth")
+        // The "end of billing period" day is the charge date
+        val billingEndDay = chargeDate
+        
+        Log.d(TAG, "Scheduling reminders for $currentYear-${currentMonth + 1}, today is day $currentDay, charge date is $billingEndDay")
         
         // Get preferred reminder time (default 9 AM)
         val reminderHour = prefs.getInt(KEY_REMINDER_HOUR, 9)
         val reminderMinute = prefs.getInt(KEY_REMINDER_MINUTE, 0)
         
+        // Determine the target charge date
+        // If we've already passed this month's charge date, schedule for next month
+        var targetMonth = currentMonth
+        var targetYear = currentYear
+        if (currentDay > billingEndDay) {
+            targetMonth += 1
+            if (targetMonth > 11) {
+                targetMonth = 0
+                targetYear += 1
+            }
+        }
+        
         // Schedule 3-day reminder
-        val threeDaysBefore = lastDayOfMonth - 3
-        if (currentDay <= threeDaysBefore) {
-            scheduleReminder(
+        val threeDaysBefore = billingEndDay - 3
+        if (threeDaysBefore > 0) {
+            scheduleReminderForDate(
                 context = context,
+                year = targetYear,
+                month = targetMonth,
                 day = threeDaysBefore,
                 hour = reminderHour,
                 minute = reminderMinute,
@@ -79,10 +101,12 @@ object EndOfMonthReminderScheduler {
         }
         
         // Schedule 1-day reminder
-        val oneDayBefore = lastDayOfMonth - 1
-        if (currentDay <= oneDayBefore) {
-            scheduleReminder(
+        val oneDayBefore = billingEndDay - 1
+        if (oneDayBefore > 0) {
+            scheduleReminderForDate(
                 context = context,
+                year = targetYear,
+                month = targetMonth,
                 day = oneDayBefore,
                 hour = reminderHour,
                 minute = reminderMinute,
@@ -91,39 +115,41 @@ object EndOfMonthReminderScheduler {
             )
         }
         
-        // Schedule last day morning reminder (9 AM)
-        if (currentDay <= lastDayOfMonth) {
-            scheduleReminder(
-                context = context,
-                day = lastDayOfMonth,
-                hour = 9,
-                minute = 0,
-                requestCode = REQUEST_CODE_LAST_DAY_MORNING,
-                action = EndOfMonthReminderReceiver.ACTION_LAST_DAY_REMINDER
-            )
-        }
+        // Schedule charge date morning reminder (9 AM)
+        scheduleReminderForDate(
+            context = context,
+            year = targetYear,
+            month = targetMonth,
+            day = billingEndDay,
+            hour = 9,
+            minute = 0,
+            requestCode = REQUEST_CODE_LAST_DAY_MORNING,
+            action = EndOfMonthReminderReceiver.ACTION_LAST_DAY_REMINDER
+        )
         
-        // Schedule last day evening reminder (6 PM)
-        if (currentDay <= lastDayOfMonth) {
-            scheduleReminder(
-                context = context,
-                day = lastDayOfMonth,
-                hour = 18,
-                minute = 0,
-                requestCode = REQUEST_CODE_LAST_DAY_EVENING,
-                action = EndOfMonthReminderReceiver.ACTION_LAST_DAY_REMINDER
-            )
-        }
+        // Schedule charge date evening reminder (6 PM)
+        scheduleReminderForDate(
+            context = context,
+            year = targetYear,
+            month = targetMonth,
+            day = billingEndDay,
+            hour = 18,
+            minute = 0,
+            requestCode = REQUEST_CODE_LAST_DAY_EVENING,
+            action = EndOfMonthReminderReceiver.ACTION_LAST_DAY_REMINDER
+        )
         
         // Update last reminder month
-        prefs.edit().putString(KEY_LAST_REMINDER_MONTH, "$currentYear-${currentMonth + 1}").apply()
+        prefs.edit().putString(KEY_LAST_REMINDER_MONTH, "$targetYear-${targetMonth + 1}").apply()
     }
     
     /**
-     * Schedule a single reminder at the specified time.
+     * Schedule a single reminder at the specified date and time.
      */
-    private fun scheduleReminder(
+    private fun scheduleReminderForDate(
         context: Context,
+        year: Int,
+        month: Int,
         day: Int,
         hour: Int,
         minute: Int,
@@ -133,6 +159,8 @@ object EndOfMonthReminderScheduler {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         
         val calendar = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
             set(Calendar.DAY_OF_MONTH, day)
             set(Calendar.HOUR_OF_DAY, hour)
             set(Calendar.MINUTE, minute)
@@ -142,7 +170,7 @@ object EndOfMonthReminderScheduler {
         
         // Don't schedule if time has already passed
         if (calendar.timeInMillis <= System.currentTimeMillis()) {
-            Log.d(TAG, "Skipping reminder for day $day - time has passed")
+            Log.d(TAG, "Skipping reminder for $year-${month+1}-$day - time has passed")
             return
         }
         
@@ -157,10 +185,8 @@ object EndOfMonthReminderScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         
-        // Use setExactAndAllowWhileIdle for reliable delivery
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // Android 12+ requires checking for exact alarm permission
                 if (alarmManager.canScheduleExactAlarms()) {
                     alarmManager.setExactAndAllowWhileIdle(
                         AlarmManager.RTC_WAKEUP,
@@ -168,7 +194,6 @@ object EndOfMonthReminderScheduler {
                         pendingIntent
                     )
                 } else {
-                    // Fall back to inexact alarm
                     alarmManager.set(
                         AlarmManager.RTC_WAKEUP,
                         calendar.timeInMillis,
@@ -183,10 +208,9 @@ object EndOfMonthReminderScheduler {
                 )
             }
             
-            Log.d(TAG, "Scheduled reminder: day=$day, hour=$hour, action=$action")
+            Log.d(TAG, "Scheduled reminder: $year-${month+1}-$day, hour=$hour, action=$action")
         } catch (e: SecurityException) {
             Log.e(TAG, "Failed to schedule exact alarm", e)
-            // Fall back to regular alarm
             alarmManager.set(
                 AlarmManager.RTC_WAKEUP,
                 calendar.timeInMillis,

@@ -19,10 +19,13 @@ import com.google.android.material.textfield.TextInputEditText
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.data.ProjectedReading
+import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Locale
 
 /**
  * Activity for managing history-related settings including:
+ * - Charge Date
  * - CWD Previous Reading
  * - App's Previous Reading (read-only)
  * - Projected Month-End readings (CWD and App versions)
@@ -30,6 +33,9 @@ import java.util.Locale
 class HistorySettingsActivity : AppCompatActivity() {
 
     private lateinit var toolbar: Toolbar
+    private lateinit var textChargeDate: TextView
+    private lateinit var btnEditChargeDate: Button
+    private lateinit var textChargeDateCoverage: TextView
     private lateinit var textCwdPrevious: TextView
     private lateinit var btnEditCwdPrevious: Button
     private lateinit var textAppPrevious: TextView
@@ -96,6 +102,9 @@ class HistorySettingsActivity : AppCompatActivity() {
 
     private fun initializeViews() {
         toolbar = findViewById(R.id.toolbar)
+        textChargeDate = findViewById(R.id.text_charge_date)
+        btnEditChargeDate = findViewById(R.id.btn_edit_charge_date)
+        textChargeDateCoverage = findViewById(R.id.text_charge_date_coverage)
         textCwdPrevious = findViewById(R.id.text_cwd_previous)
         btnEditCwdPrevious = findViewById(R.id.btn_edit_cwd_previous)
         textAppPrevious = findViewById(R.id.text_app_previous)
@@ -121,10 +130,39 @@ class HistorySettingsActivity : AppCompatActivity() {
     }
 
     private fun loadData() {
+        loadChargeDate()
         loadCwdPreviousReading()
         loadAppPreviousReading()
         loadProjections()
         loadPredictionStats()
+    }
+
+    private fun loadChargeDate() {
+        val chargeDate = prefs.getInt("charge_date", -1)
+        if (chargeDate > 0) {
+            textChargeDate.text = "Day $chargeDate"
+            // Show coverage example
+            val cal = Calendar.getInstance()
+            val currentMonth = cal.get(Calendar.MONTH) // 0-based
+            val currentYear = cal.get(Calendar.YEAR)
+            val monthFormat = SimpleDateFormat("MMMM", Locale.getDefault())
+            
+            // Current billing period: previous month's (chargeDate+1) to this month's chargeDate
+            val endCal = Calendar.getInstance()
+            endCal.set(currentYear, currentMonth, chargeDate)
+            
+            val startCal = Calendar.getInstance()
+            startCal.set(currentYear, currentMonth, chargeDate)
+            startCal.add(Calendar.MONTH, -1)
+            startCal.add(Calendar.DAY_OF_MONTH, -1)
+            
+            val startFormat = SimpleDateFormat("MMM d", Locale.getDefault())
+            val endFormat = SimpleDateFormat("MMM d", Locale.getDefault())
+            textChargeDateCoverage.text = "Current period: ${startFormat.format(startCal.time)} – ${endFormat.format(endCal.time)}"
+        } else {
+            textChargeDate.text = "Not Set"
+            textChargeDateCoverage.text = "Set this to match your CWD receipt date"
+        }
     }
 
     private fun loadCwdPreviousReading() {
@@ -212,6 +250,10 @@ class HistorySettingsActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
+        btnEditChargeDate.setOnClickListener {
+            showEditChargeDateDialog()
+        }
+        
         btnEditCwdPrevious.setOnClickListener {
             showEditCwdPreviousDialog()
         }
@@ -219,6 +261,49 @@ class HistorySettingsActivity : AppCompatActivity() {
         btnHistoryLogs.setOnClickListener {
             startActivity(Intent(this, HistoryActivity::class.java))
         }
+    }
+
+    private fun showEditChargeDateDialog() {
+        val currentChargeDate = prefs.getInt("charge_date", 28)
+        
+        val container = android.widget.FrameLayout(this)
+        val innerLayout = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val margin = (16 * resources.displayMetrics.density).toInt()
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                leftMargin = margin
+                rightMargin = margin
+                topMargin = margin
+            }
+        }
+        
+        val numberPicker = android.widget.NumberPicker(this).apply {
+            minValue = 1
+            maxValue = 28
+            value = currentChargeDate
+            wrapSelectorWheel = true
+        }
+        innerLayout.addView(numberPicker)
+        container.addView(innerLayout)
+        
+        AlertDialog.Builder(this)
+            .setTitle("Edit Charge Date")
+            .setMessage("Select the day of the month from your CWD receipt (1-28):")
+            .setView(container)
+            .setPositiveButton("Save") { _, _ ->
+                val newDate = numberPicker.value
+                prefs.edit()
+                    .putInt("charge_date", newDate)
+                    .putBoolean("charge_date_set", true)
+                    .apply()
+                loadChargeDate()
+                Toast.makeText(this, "Charge date updated to day $newDate", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun showEditCwdPreviousDialog() {
@@ -256,21 +341,35 @@ class HistorySettingsActivity : AppCompatActivity() {
      * Show detailed breakdown of how projection was calculated
      */
     private fun showProjectionBreakdown(projection: ProjectedReading, previousReading: Int, source: String) {
-        val calendar = java.util.Calendar.getInstance()
-        val monthName = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault()).format(calendar.time)
-        val lastDayOfMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
-        val currentDay = calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        val calendar = Calendar.getInstance()
+        val monthName = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(calendar.time)
+        val chargeDate = prefs.getInt("charge_date", -1)
+        val chargeDateSet = prefs.getBoolean("charge_date_set", false)
+        
+        val targetDay: Int
+        val daysLeft: Int
+        val currentDay = calendar.get(Calendar.DAY_OF_MONTH)
+        
+        if (chargeDateSet && chargeDate > 0) {
+            targetDay = chargeDate
+            daysLeft = com.kokeshi.metersnap.utils.ChargeDateHelper.getDaysUntilChargeDate(chargeDate)
+        } else {
+            targetDay = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+            daysLeft = targetDay - currentDay
+        }
         
         val projectedInt = projection.projectedReading.toInt()
         val projectedUsage = projectedInt - previousReading
         val confidencePercent = (projection.confidenceScore * 100).toInt()
         val dailyRate = projection.dailyUsageRate
         
+        val targetLabel = if (chargeDateSet) "Charge Date" else "Month End"
+        
         val message = buildString {
             appendLine("📊 Projection Breakdown ($source)\n")
             
-            appendLine("📅 Target Date:")
-            appendLine("   $monthName $lastDayOfMonth at 11:59 PM\n")
+            appendLine("📅 Target ($targetLabel):")
+            appendLine("   $monthName $targetDay\n")
             
             appendLine("📈 Projected Reading:")
             appendLine("   $projectedInt m³\n")
@@ -290,9 +389,8 @@ class HistorySettingsActivity : AppCompatActivity() {
             
             appendLine("\n💡 Method: ${projection.source}")
             
-            val daysLeft = lastDayOfMonth - currentDay
             if (daysLeft > 0) {
-                appendLine("\n⏳ $daysLeft days until month end")
+                appendLine("\n⏳ $daysLeft days until $targetLabel")
             }
         }
         

@@ -35,24 +35,26 @@
             android:id="@+id/btn_debug_strip"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:visibility="visible"
+            android:visibility="gone"
             android:text="Debug Strip"
             android:textSize="11sp"
             android:paddingHorizontal="8dp"
             android:paddingVertical="4dp"
-            android:minHeight="0dp"/>
+            android:minHeight="0dp"
+            android:clickable="false"/>
         
         <Button
             android:id="@+id/btn_debug_fake_prev_month"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:visibility="visible"
+            android:visibility="gone"
             android:text="Fake Prev"
             android:textSize="11sp"
             android:paddingHorizontal="8dp"
             android:paddingVertical="4dp"
             android:minHeight="0dp"
-            android:layout_marginTop="4dp"/>
+            android:layout_marginTop="4dp"
+            android:clickable="false"/>
     </LinearLayout>
 
     <View

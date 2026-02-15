@@ -17,10 +17,25 @@
         android:elevation="4dp"
         android:paddingBottom="8dp"
         app:contentInsetStartWithNavigation="0dp"
+        app:contentInsetEnd="0dp"
         app:navigationIcon="?attr/homeAsUpIndicator"
         app:title="History Logs"
         app:titleTextColor="?android:attr/textColorPrimary"
-        app:titleMarginStart="8dp" />
+        app:titleMarginStart="8dp">
+
+        <ImageButton
+            android:id="@+id/btn_sort"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="end"
+            android:layout_marginEnd="8dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Sort by date"
+            android:src="@drawable/ic_sort_dates"
+            android:padding="12dp"
+            app:tint="?android:attr/textColorPrimary" />
+
+    </androidx.appcompat.widget.Toolbar>
 
     <!-- RecyclerView for History -->
     <androidx.recyclerview.widget.RecyclerView

@@ -13,23 +13,26 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 
 /**
- * Predicts end-of-month meter readings using SMART month-baseline approach with regression fallback.
+ * Predicts billing-period-end meter readings using SMART baseline approach with regression fallback.
+ * 
+ * When a CWD charge date (1-28) is set, all calculations use billing period boundaries
+ * instead of calendar month boundaries. Otherwise falls back to calendar months.
  * 
  * ## Algorithm Overview (Priority Order):
  * 
- * ### 1. SMART APPROACH (Preferred) - Month Baseline Extrapolation
- * Uses the "previous reading" (start of month baseline) for stable predictions.
+ * ### 1. SMART APPROACH (Preferred) - Billing Period Baseline Extrapolation
+ * Uses the "previous reading" (start of billing period baseline) for stable predictions.
  * 
  * **How it works:**
- * - Previous reading (Jan 1): 2096 cu.m
- * - Current reading (Jan 24): 2098 cu.m  
+ * - Previous reading: 2096 cu.m
+ * - Current reading (day 24 of billing period): 2098 cu.m  
  * - Usage so far: 2 cu.m in 24 days = 0.083 cu.m/day
- * - Prediction: 2096 + (0.083 × 31 days) = 2099 cu.m by Jan 31
+ * - Prediction: 2096 + (0.083 × period_length) = ~2099 cu.m by charge date
  * 
  * **Why it's stable:**
- * - Uses entire month's context, not just recent scans
+ * - Uses entire billing period's context, not just recent scans
  * - Immune to short-term usage spikes
- * - Simple math: total_usage ÷ days_elapsed × total_days_in_month
+ * - Simple math: total_usage ÷ days_elapsed × total_days_in_period
  * 
  * ### 2. REGRESSION APPROACH (Fallback)
  * When previous reading unavailable, uses linear regression on scan history.
@@ -49,6 +52,15 @@ import kotlin.math.sqrt
  * - FALLBACK: At least 1 scan (returns flat prediction)
  */
 class ReadingPredictor(context: Context) {
+    
+    private val chargeDate: Int
+    private val chargeDateSet: Boolean
+    
+    init {
+        val prefs = context.getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
+        chargeDateSet = prefs.getBoolean("charge_date_set", false)
+        chargeDate = prefs.getInt("charge_date", 28)
+    }
     
     companion object {
         private const val TAG = "ReadingPredictor"
@@ -78,7 +90,9 @@ class ReadingPredictor(context: Context) {
     private val context = context
     
     /**
-     * Predict the meter reading at 11:59:59 PM on the last day of the specified month.
+     * Predict the meter reading at the end of the billing period for the specified month.
+     * When charge date is set, the billing period end is the charge date.
+     * Otherwise, the end is 11:59:59 PM on the last calendar day of the month.
      * 
      * @param year The year (e.g., 2026)
      * @param month The month (1-12, where 1 = January)
@@ -200,9 +214,10 @@ class ReadingPredictor(context: Context) {
      * SMART APPROACH: Predict using month baseline (previous reading).
      * This is more stable than regression because it uses the entire month's context.
      * 
+     * When charge date is set, uses billing period boundaries instead of calendar month.
      * Example: Previous reading on Jan 1 = 2096, Current reading on Jan 24 = 2098
      * Days elapsed = 24, Usage so far = 2, Avg daily = 2/24 = 0.083 cu.m/day
-     * Days in Jan = 31, Predicted = 2096 + (0.083 × 31) = 2098.6
+     * Days in billing period = ~30, Predicted = 2096 + (0.083 × 30) = 2098.5
      */
     private fun predictUsingMonthBaseline(
         previousReading: Int,
@@ -212,11 +227,11 @@ class ReadingPredictor(context: Context) {
         year: Int,
         month: Int
     ): ProjectedReading {
-        // Calculate days elapsed since start of month
-        val monthStartTimestamp = getMonthStartTimestamp(year, month)
-        val daysElapsed = (lastReading.timestamp - monthStartTimestamp).toDouble() / (24 * 60 * 60 * 1000)
+        // Calculate days elapsed since start of billing period
+        val periodStartTimestamp = getMonthStartTimestamp(year, month)
+        val daysElapsed = (lastReading.timestamp - periodStartTimestamp).toDouble() / (24 * 60 * 60 * 1000)
         
-        // Calculate usage so far this month
+        // Calculate usage so far this billing period
         val usageSoFar = lastReading.currentReading - previousReading
         
         // Calculate average daily usage
@@ -225,20 +240,18 @@ class ReadingPredictor(context: Context) {
         // Cap to reasonable maximum
         val normalizedDailyUsage = avgDailyUsage.coerceIn(0.0, MAX_REASONABLE_DAILY_USAGE)
         
-        // Calculate total days in month
-        val calendar = Calendar.getInstance()
-        calendar.set(year, month - 1, 1)
-        val totalDaysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+        // Calculate total days in billing period
+        val totalDaysInPeriod = ((lastDayTimestamp - periodStartTimestamp).toDouble() / (24 * 60 * 60 * 1000)).toInt().coerceAtLeast(28)
         
-        // Predict end-of-month reading
-        val predictedReading = previousReading + (normalizedDailyUsage * totalDaysInMonth)
+        // Predict end-of-period reading
+        val predictedReading = previousReading + (normalizedDailyUsage * totalDaysInPeriod)
         
         // Calculate confidence based on days elapsed
-        val confidence = (daysElapsed / totalDaysInMonth).coerceIn(0.1, 0.95)
+        val confidence = (daysElapsed / totalDaysInPeriod).coerceIn(0.1, 0.95)
         
         Log.d(TAG, "SMART PREDICTION: prev=$previousReading, current=${lastReading.currentReading}, " +
                 "usage=$usageSoFar in ${daysElapsed.format(1)} days = ${normalizedDailyUsage.format(3)} cu.m/day")
-        Log.d(TAG, "Predicted for $totalDaysInMonth days: ${predictedReading.format(1)} (confidence: ${(confidence*100).format(0)}%)")
+        Log.d(TAG, "Predicted for $totalDaysInPeriod days: ${predictedReading.format(1)} (confidence: ${(confidence*100).format(0)}%)")
         
         return ProjectedReading(
             monthYear = monthYear,
@@ -282,11 +295,24 @@ class ReadingPredictor(context: Context) {
     }
     
     /**
-     * Get timestamp for start of month (00:00:00)
+     * Get timestamp for start of billing period (00:00:00).
+     * When charge date is set: previous month's charge date - 1.
+     * Otherwise: first day of calendar month.
      */
     private fun getMonthStartTimestamp(year: Int, month: Int): Long {
         val calendar = Calendar.getInstance()
-        calendar.set(year, month - 1, 1, 0, 0, 0)
+        if (chargeDateSet) {
+            // Billing period starts on (previous month's charge date - 1)
+            calendar.set(year, month - 1, 1) // set to this month first
+            calendar.add(Calendar.MONTH, -1) // go to previous month
+            calendar.set(Calendar.DAY_OF_MONTH, chargeDate.coerceAtMost(calendar.getActualMaximum(Calendar.DAY_OF_MONTH)))
+            calendar.add(Calendar.DAY_OF_MONTH, -1) // day before charge date
+        } else {
+            calendar.set(year, month - 1, 1)
+        }
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
         calendar.set(Calendar.MILLISECOND, 0)
         return calendar.timeInMillis
     }
@@ -573,14 +599,26 @@ class ReadingPredictor(context: Context) {
         val calendar = Calendar.getInstance()
         
         for (entry in allHistory) {
-            calendar.timeInMillis = entry.timestamp
-            val entryYear = calendar.get(Calendar.YEAR)
-            val entryMonth = calendar.get(Calendar.MONTH) + 1
+            val key: String
+            val entryYear: Int
+            val entryMonth: Int
+            
+            if (chargeDateSet) {
+                val periodKey = ChargeDateHelper.getBillingPeriodKey(entry.timestamp, chargeDate)
+                val parts = periodKey.split("-")
+                entryYear = parts[0].toInt()
+                entryMonth = parts[1].toInt()
+                key = periodKey
+            } else {
+                calendar.timeInMillis = entry.timestamp
+                entryYear = calendar.get(Calendar.YEAR)
+                entryMonth = calendar.get(Calendar.MONTH) + 1
+                key = "$entryYear-$entryMonth"
+            }
             
             // Skip excluded month
             if (excludeYear == entryYear && excludeMonth == entryMonth) continue
             
-            val key = "$entryYear-$entryMonth"
             monthlyUsages[key] = (monthlyUsages[key] ?: 0) + entry.usage
         }
         
@@ -625,12 +663,22 @@ class ReadingPredictor(context: Context) {
     }
     
     /**
-     * Get all scan history entries for a specific month.
+     * Get all scan history entries for a specific billing period.
+     * When charge date is set, uses billing period boundaries.
+     * Otherwise, filters by calendar month.
      */
     fun getReadingsForMonth(year: Int, month: Int): List<ScanHistoryEntry> {
         val allHistory = historyManager.getAllHistory()
-        val calendar = Calendar.getInstance()
         
+        if (chargeDateSet) {
+            val periodStart = getMonthStartTimestamp(year, month)
+            val periodEnd = getMonthEndTimestamp(year, month)
+            return allHistory.filter { entry ->
+                entry.timestamp in periodStart..periodEnd
+            }
+        }
+        
+        val calendar = Calendar.getInstance()
         return allHistory.filter { entry ->
             calendar.timeInMillis = entry.timestamp
             calendar.get(Calendar.YEAR) == year && calendar.get(Calendar.MONTH) + 1 == month
@@ -638,13 +686,19 @@ class ReadingPredictor(context: Context) {
     }
     
     /**
-     * Get timestamp for 11:59:59 PM on the last day of the specified month.
+     * Get timestamp for 11:59:59 PM on the end of the billing period.
+     * When charge date is set: this month's charge date.
+     * Otherwise: last day of calendar month.
      */
     private fun getMonthEndTimestamp(year: Int, month: Int): Long {
         val calendar = Calendar.getInstance()
         calendar.set(Calendar.YEAR, year)
         calendar.set(Calendar.MONTH, month - 1) // Calendar months are 0-indexed
-        calendar.set(Calendar.DAY_OF_MONTH, calendar.getActualMaximum(Calendar.DAY_OF_MONTH))
+        if (chargeDateSet) {
+            calendar.set(Calendar.DAY_OF_MONTH, chargeDate.coerceAtMost(calendar.getActualMaximum(Calendar.DAY_OF_MONTH)))
+        } else {
+            calendar.set(Calendar.DAY_OF_MONTH, calendar.getActualMaximum(Calendar.DAY_OF_MONTH))
+        }
         calendar.set(Calendar.HOUR_OF_DAY, 23)
         calendar.set(Calendar.MINUTE, 59)
         calendar.set(Calendar.SECOND, 59)
@@ -661,10 +715,13 @@ class ReadingPredictor(context: Context) {
     }
     
     /**
-     * Check if today is near the end of month (for notification purposes).
-     * Returns the number of days until month end.
+     * Returns the number of days until the billing period end.
+     * Uses charge date when set, otherwise calendar month end.
      */
     fun getDaysUntilMonthEnd(): Int {
+        if (chargeDateSet) {
+            return ChargeDateHelper.getDaysUntilChargeDate(chargeDate)
+        }
         val calendar = Calendar.getInstance()
         val today = calendar.get(Calendar.DAY_OF_MONTH)
         val lastDay = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
@@ -672,7 +729,7 @@ class ReadingPredictor(context: Context) {
     }
     
     /**
-     * Check if today is the last day of the month.
+     * Check if today is the billing period end date.
      */
     fun isLastDayOfMonth(): Boolean {
         return getDaysUntilMonthEnd() == 0
