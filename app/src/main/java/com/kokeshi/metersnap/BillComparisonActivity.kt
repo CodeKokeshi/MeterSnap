@@ -89,6 +89,7 @@ class BillComparisonActivity : AppCompatActivity() {
     // Session tracking - prevents duplicates
     private var sessionId: String = UUID.randomUUID().toString()
     private var historySaved: Boolean = false
+    private var originalTimestamp: Long = 0L
     
     private lateinit var dualComparison: DualBillComparison
     private lateinit var billPagerAdapter: BillPagerAdapter
@@ -224,6 +225,7 @@ class BillComparisonActivity : AppCompatActivity() {
         if (isFromHistory) {
             // Use the existing history entry ID if provided
             sessionId = intent.getStringExtra("HISTORY_ID") ?: sessionId
+            originalTimestamp = intent.getLongExtra("ORIGINAL_TIMESTAMP", 0L)
             historySaved = true // Already in history, don't re-save
             
             // Check if this history entry has a comparison saved
@@ -479,11 +481,18 @@ class BillComparisonActivity : AppCompatActivity() {
             }
         }
         
-        btnHome.setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
-            startActivity(intent)
-            finish()
+        if (isFromHistory) {
+            btnHome.text = "Delete"
+            btnHome.setOnClickListener {
+                showDeleteHistoryEntryDialog()
+            }
+        } else {
+            btnHome.setOnClickListener {
+                val intent = Intent(this, MainActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
+                startActivity(intent)
+                finish()
+            }
         }
     }
     
@@ -735,7 +744,7 @@ class BillComparisonActivity : AppCompatActivity() {
 
     private fun saveBitmapToGallery(bitmap: Bitmap, isCwdTab: Boolean): Uri? {
         val sourceTag = if (isCwdTab) "CWD" else "AppPredicted"
-        val filename = "MeterSnap_${sourceTag}_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
+        val filename = "MeteRead_${sourceTag}_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
         var fos: OutputStream? = null
         var imageUri: Uri? = null
 
@@ -745,14 +754,14 @@ class BillComparisonActivity : AppCompatActivity() {
                 val contentValues = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
                     put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/MeterSnap")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/MeteRead")
                 }
 
                 imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
                 fos = imageUri?.let { resolver.openOutputStream(it) }
             } else {
                 val imagesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-                val meterSnapDir = File(imagesDir, "MeterSnap")
+                val meterSnapDir = File(imagesDir, "MeteRead")
                 if (!meterSnapDir.exists()) {
                     meterSnapDir.mkdirs()
                 }
@@ -776,6 +785,36 @@ class BillComparisonActivity : AppCompatActivity() {
         }
     }
     
+    /**
+     * Save the edited history entry back to history.
+     * Called when user edits reading while viewing from history.
+     */
+    private fun saveEditedHistoryEntry() {
+        val entry = createDualHistoryEntry()
+        historyManager.updateOrAddEntry(entry)
+        projectedReadingManager.recalculateProjectionsAfterHistoryChange(originalTimestamp)
+        Log.d(TAG, "History entry updated after edit: sessionId=$sessionId")
+    }
+    
+    /**
+     * Show confirmation dialog to delete this history entry.
+     * Only shown when viewing from history.
+     */
+    private fun showDeleteHistoryEntryDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Delete This Entry?")
+            .setMessage("This history log entry will be permanently deleted.")
+            .setPositiveButton("Delete") { _, _ ->
+                historyManager.deleteEntry(sessionId)
+                projectedReadingManager.recalculateProjectionsAfterHistoryChange(originalTimestamp)
+                Toast.makeText(this, "History entry deleted", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+            .setNegativeButton("Cancel", null)
+            .setIcon(android.R.drawable.ic_dialog_alert)
+            .show()
+    }
+    
     private fun saveBothBillsToHistory() {
         // Don't save if already from history (viewing existing entry)
         if (isFromHistory) {
@@ -789,8 +828,8 @@ class BillComparisonActivity : AppCompatActivity() {
         // Use updateOrAdd to prevent duplicates (uses sessionId)
         historyManager.updateOrAddEntry(entry)
         
-        // Update projection for current month
-        projectedReadingManager.recordActualMonthEndReading(currentReading)
+        // Recalculate projections from actual history data (not stale incremental updates)
+        projectedReadingManager.recalculateProjectionsAfterHistoryChange(System.currentTimeMillis())
         
         historySaved = true
         Log.d(TAG, "History saved with sessionId=$sessionId")
@@ -805,9 +844,12 @@ class BillComparisonActivity : AppCompatActivity() {
         val appBill = dualComparison.appPredictedBill
         val hasComparison = dualComparison.hasPrediction && appBill != null
         
+        // Use original timestamp when editing from history, otherwise use current time
+        val entryTimestamp = if (isFromHistory && originalTimestamp > 0L) originalTimestamp else System.currentTimeMillis()
+        
         return ScanHistoryEntry(
             id = sessionId, // Use session ID for update tracking
-            timestamp = System.currentTimeMillis(),
+            timestamp = entryTimestamp,
             currentReading = cwdBill.currentReading,
             
             // CWD calculation
@@ -914,8 +956,13 @@ class BillComparisonActivity : AppCompatActivity() {
             calculateFreshBills() // Recalculate with new reading
             billPagerAdapter.updateData(dualComparison.cwdBill, dualComparison.appPredictedBill, dualComparison)
             
-            // Mark as needing to save again (will update existing entry with same sessionId)
-            historySaved = false
+            // If viewing from history, save the updated entry back immediately
+            if (isFromHistory) {
+                saveEditedHistoryEntry()
+            } else {
+                // Mark as needing to save again (will update existing entry with same sessionId)
+                historySaved = false
+            }
             
             Toast.makeText(this, "Bills recalculated", Toast.LENGTH_SHORT).show()
             dialog.dismiss()

@@ -244,7 +244,8 @@ class ReadingPredictor(context: Context) {
         val totalDaysInPeriod = ((lastDayTimestamp - periodStartTimestamp).toDouble() / (24 * 60 * 60 * 1000)).toInt().coerceAtLeast(28)
         
         // Predict end-of-period reading
-        val predictedReading = previousReading + (normalizedDailyUsage * totalDaysInPeriod)
+        val rawPredictedReading = previousReading + (normalizedDailyUsage * totalDaysInPeriod)
+        val predictedReading = rawPredictedReading.coerceAtLeast(lastReading.currentReading.toDouble())
         
         // Calculate confidence based on days elapsed
         val confidence = (daysElapsed / totalDaysInPeriod).coerceIn(0.1, 0.95)
@@ -516,8 +517,9 @@ class ReadingPredictor(context: Context) {
         // Calculate days from last reading to month end
         val daysRemaining = (lastDayTimestamp - lastReading.timestamp).toDouble() / (24 * 60 * 60 * 1000)
         
-        // Extrapolate
-        val predictedReading = lastReading.currentReading + avgDailyUsage * daysRemaining
+        // Extrapolate; never return below the latest actual reading
+        val rawPredictedReading = lastReading.currentReading + avgDailyUsage * daysRemaining
+        val predictedReading = rawPredictedReading.coerceAtLeast(lastReading.currentReading.toDouble())
         
         Log.d(TAG, "Single point prediction: base=${lastReading.currentReading}, daysRemaining=$daysRemaining, avgDaily=$avgDailyUsage")
         
@@ -564,7 +566,8 @@ class ReadingPredictor(context: Context) {
             return null
         }
         
-        val predictedReading = lastReading.currentReading + avgDailyUsage * daysRemaining
+        val rawPredictedReading = lastReading.currentReading + avgDailyUsage * daysRemaining
+        val predictedReading = rawPredictedReading.coerceAtLeast(lastReading.currentReading.toDouble())
         
         val monthYear = String.format("%04d-%02d", year, month)
         

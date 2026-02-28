@@ -93,6 +93,7 @@ class BillResultActivity : AppCompatActivity() {
     // Session tracking for history - prevents duplicates
     private var sessionId: String = UUID.randomUUID().toString()
     private var historySaved: Boolean = false
+    private var originalTimestamp: Long = 0L
     
     // Managers
     private lateinit var historyManager: HistoryManager
@@ -188,12 +189,19 @@ class BillResultActivity : AppCompatActivity() {
             }
         }
 
-        btnHome.setOnClickListener {
-            // Navigate to main activity
-            val intent = Intent(this, MainActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
-            startActivity(intent)
-            finish()
+        if (isFromHistory) {
+            btnHome.text = "Delete"
+            btnHome.setOnClickListener {
+                showDeleteHistoryEntryDialog()
+            }
+        } else {
+            btnHome.setOnClickListener {
+                // Navigate to main activity
+                val intent = Intent(this, MainActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
+                startActivity(intent)
+                finish()
+            }
         }
         
         // HITL: Make current reading editable
@@ -255,6 +263,11 @@ class BillResultActivity : AppCompatActivity() {
             // Update and recalculate
             currentReading = newReading
             recalculateBill()
+            
+            // If viewing from history, save the updated entry back
+            if (isFromHistory) {
+                saveEditedHistoryEntry()
+            }
             
             Toast.makeText(this, "Bill recalculated with corrected reading", Toast.LENGTH_SHORT).show()
             dialog.dismiss()
@@ -588,7 +601,7 @@ class BillResultActivity : AppCompatActivity() {
     }
 
     private fun saveBitmapToGallery(bitmap: Bitmap): Uri? {
-        val filename = "MeterSnap_Bill_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
+        val filename = "MeteRead_Bill_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
         var fos: OutputStream? = null
         var imageUri: Uri? = null
 
@@ -599,7 +612,7 @@ class BillResultActivity : AppCompatActivity() {
                 val contentValues = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
                     put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/MeterSnap")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/MeteRead")
                 }
 
                 imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
@@ -607,7 +620,7 @@ class BillResultActivity : AppCompatActivity() {
             } else {
                 // Android 9 and below
                 val imagesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-                val meterSnapDir = File(imagesDir, "MeterSnap")
+                val meterSnapDir = File(imagesDir, "MeteRead")
                 if (!meterSnapDir.exists()) {
                     meterSnapDir.mkdirs()
                 }
@@ -646,6 +659,7 @@ class BillResultActivity : AppCompatActivity() {
         // Handle session ID for history tracking
         if (isFromHistory) {
             sessionId = intent.getStringExtra("HISTORY_ID") ?: sessionId
+            originalTimestamp = intent.getLongExtra("ORIGINAL_TIMESTAMP", 0L)
             historySaved = true // Already in history
         } else if (isCalculatorMode) {
             sessionId = UUID.randomUUID().toString()
@@ -771,6 +785,38 @@ class BillResultActivity : AppCompatActivity() {
     }
     
     /**
+     * Save the edited history entry back to history.
+     * Called when user edits reading while viewing from history.
+     */
+    private fun saveEditedHistoryEntry() {
+        val entry = ScanHistoryEntry(
+            id = sessionId,
+            timestamp = originalTimestamp, // Preserve original timestamp so entry stays in its month
+            currentReading = currentReading,
+            previousReading = previousReading,
+            usage = usage,
+            rateType = rateType,
+            waterBill = waterBill,
+            esfFee = esfFee,
+            totalBill = totalBill,
+            tier1Usage = tier1Usage,
+            tier1Amount = tier1Amount,
+            tier2Usage = tier2Usage,
+            tier2Amount = tier2Amount,
+            tier3Usage = tier3Usage,
+            tier3Amount = tier3Amount,
+            tier4Usage = tier4Usage,
+            tier4Amount = tier4Amount,
+            tier5Usage = tier5Usage,
+            tier5Amount = tier5Amount,
+            hasComparison = false
+        )
+        historyManager.updateOrAddEntry(entry)
+        projectedReadingManager.recalculateProjectionsAfterHistoryChange(originalTimestamp)
+        Log.d("BillResult", "History entry updated after edit: sessionId=$sessionId")
+    }
+    
+    /**
      * Save the current bill to history.
      * Uses sessionId to prevent duplicates (update if exists).
      */
@@ -804,10 +850,31 @@ class BillResultActivity : AppCompatActivity() {
         )
         
         historyManager.updateOrAddEntry(entry)
-        projectedReadingManager.recordActualMonthEndReading(currentReading)
+        
+        // Recalculate projections from actual history data (not stale incremental updates)
+        projectedReadingManager.recalculateProjectionsAfterHistoryChange(System.currentTimeMillis())
         
         historySaved = true
         Log.d("BillResult", "History saved with sessionId=$sessionId")
+    }
+
+    /**
+     * Show confirmation dialog to delete this history entry.
+     * Only shown when viewing from history.
+     */
+    private fun showDeleteHistoryEntryDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Delete This Entry?")
+            .setMessage("This history log entry will be permanently deleted.")
+            .setPositiveButton("Delete") { _, _ ->
+                historyManager.deleteEntry(sessionId)
+                projectedReadingManager.recalculateProjectionsAfterHistoryChange(originalTimestamp)
+                Toast.makeText(this, "History entry deleted", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+            .setNegativeButton("Cancel", null)
+            .setIcon(android.R.drawable.ic_dialog_alert)
+            .show()
     }
 
     override fun onSupportNavigateUp(): Boolean {

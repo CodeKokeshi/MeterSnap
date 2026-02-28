@@ -53,7 +53,7 @@ class TutorialOverlay @JvmOverloads constructor(
         ),
         TutorialStep(
             target = StepTarget.CAMERA,
-            text = "Place your meter digits inside this guide box, keep it steady, and let MeterSnap read it."
+            text = "Place your meter digits inside this guide box, keep it steady, and let Mete:Read read it."
         )
     )
 
@@ -75,7 +75,7 @@ class TutorialOverlay @JvmOverloads constructor(
             textSize = 16f
             setTextColor(0xFFFFFFFF.toInt())
             textAlignment = TextView.TEXT_ALIGNMENT_CENTER
-            setPadding(dp(16), dp(14), dp(16), dp(14))
+            setPadding(dp(24), dp(20), dp(24), dp(20))
             background = context.getDrawable(android.R.drawable.dialog_holo_dark_frame)
             elevation = 12f
         }
@@ -179,7 +179,7 @@ class TutorialOverlay @JvmOverloads constructor(
         tutorialText.post {
             val params = tutorialText.layoutParams as LayoutParams
             params.gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
-            params.topMargin = (guideBox.y + guideBox.height + dp(14)).toInt()
+            params.topMargin = (guideBox.y + guideBox.height + dp(24)).toInt()
             tutorialText.layoutParams = params
         }
     }

@@ -28,133 +28,127 @@
             android:orientation="vertical"
             android:padding="16dp">
 
+            <!-- Stock-chart canvas -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:cardCornerRadius="8dp"
-                app:cardElevation="2dp">
+                app:cardCornerRadius="12dp"
+                app:cardElevation="3dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="16dp">
+                    android:padding="12dp">
 
                     <TextView
-                        android:id="@+id/text_summary_title"
+                        android:id="@+id/text_chart_title"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Month projection"
+                        android:text="Usage Trend"
                         android:textStyle="bold"
-                        android:textSize="16sp"
+                        android:textSize="15sp"
                         android:textColor="?android:attr/textColorPrimary" />
 
                     <TextView
-                        android:id="@+id/text_summary"
+                        android:id="@+id/text_chart_subtitle"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:textColor="?android:attr/textColorSecondary"
-                        android:textSize="13sp" />
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
+                        android:layout_marginTop="2dp"
+                        android:textSize="11sp"
+                        android:textColor="?android:attr/textColorSecondary" />
 
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                app:cardCornerRadius="8dp"
-                app:cardElevation="2dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="16dp">
-
-                    <TextView
+                    <View
+                        android:id="@+id/chart_canvas"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Visual comparison"
-                        android:textStyle="bold"
-                        android:textSize="16sp"
-                        android:textColor="?android:attr/textColorPrimary" />
+                        android:layout_height="220dp"
+                        android:layout_marginTop="8dp" />
 
-                    <TextView
-                        android:id="@+id/text_last_actual_label"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:text="Last actual"
-                        android:textColor="?android:attr/textColorSecondary"
-                        android:textSize="12sp" />
-
-                    <ProgressBar
-                        android:id="@+id/progress_last_actual"
-                        style="?android:attr/progressBarStyleHorizontal"
-                        android:layout_width="match_parent"
-                        android:layout_height="10dp"
-                        android:layout_marginTop="4dp"
-                        android:max="100"
-                        android:progress="0" />
-
-                    <TextView
-                        android:id="@+id/text_projected_label"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:text="Projected end reading"
-                        android:textColor="?android:attr/textColorSecondary"
-                        android:textSize="12sp" />
-
-                    <ProgressBar
-                        android:id="@+id/progress_projected"
-                        style="?android:attr/progressBarStyleHorizontal"
-                        android:layout_width="match_parent"
-                        android:layout_height="10dp"
-                        android:layout_marginTop="4dp"
-                        android:max="100"
-                        android:progress="0" />
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
-
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                app:cardCornerRadius="8dp"
-                app:cardElevation="2dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="16dp">
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Recent scan trend"
-                        android:textStyle="bold"
-                        android:textSize="16sp"
-                        android:textColor="?android:attr/textColorPrimary" />
-
+                    <!-- Legend row -->
                     <LinearLayout
-                        android:id="@+id/container_trend_rows"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:orientation="vertical" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <View
+                            android:id="@+id/legend_actual_swatch"
+                            android:layout_width="12dp"
+                            android:layout_height="12dp"
+                            android:background="#4CAF50" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:text="Actual"
+                            android:textSize="11sp"
+                            android:textColor="?android:attr/textColorSecondary" />
+
+                        <View
+                            android:id="@+id/legend_predicted_swatch"
+                            android:layout_width="12dp"
+                            android:layout_height="12dp"
+                            android:layout_marginStart="16dp"
+                            android:background="#FF9800" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:text="Predicted"
+                            android:textSize="11sp"
+                            android:textColor="?android:attr/textColorSecondary" />
+
+                        <View
+                            android:id="@+id/legend_baseline_swatch"
+                            android:layout_width="12dp"
+                            android:layout_height="3dp"
+                            android:layout_marginStart="16dp"
+                            android:background="#9E9E9E" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:text="Baseline"
+                            android:textSize="11sp"
+                            android:textColor="?android:attr/textColorSecondary" />
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- Stats card -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="3dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
 
                     <TextView
-                        android:id="@+id/text_trend_empty"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Projection Details"
+                        android:textStyle="bold"
+                        android:textSize="15sp"
+                        android:textColor="?android:attr/textColorPrimary" />
+
+                    <TextView
+                        android:id="@+id/text_stats"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:text="No scan trend available yet"
                         android:textColor="?android:attr/textColorSecondary"
-                        android:textSize="12sp"
-                        android:visibility="gone" />
+                        android:textSize="13sp"
+                        android:lineSpacingMultiplier="1.3" />
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
         </LinearLayout>

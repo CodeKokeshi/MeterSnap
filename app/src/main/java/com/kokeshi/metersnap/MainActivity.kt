@@ -604,7 +604,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showPreviousReadingDialog(isBillingPeriodRollover: Boolean = false) {
         val builder = AlertDialog.Builder(this)
-        builder.setTitle(if (isBillingPeriodRollover) "New Billing Period Detected" else "Welcome to MeterSnap")
+        builder.setTitle(if (isBillingPeriodRollover) "New Billing Period Detected" else "Welcome to Mete:Read")
         builder.setMessage(
             if (isBillingPeriodRollover) {
                 "A new billing period started after your charge date.\n\n" +
@@ -746,7 +746,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun showChargeDateDialog() {
         val builder = AlertDialog.Builder(this)
-        builder.setTitle("Welcome to MeterSnap")
+        builder.setTitle("Welcome to Mete:Read")
         builder.setMessage("First, let's set up your CWD billing cycle.\n\nWhat day of the month does your CWD bill charge date fall on?\n\nThis is the date shown on your CWD receipt (e.g., if your receipt says \"January 21\", enter 21).")
         
         val container = FrameLayout(this)

@@ -1,10 +1,8 @@
 package com.kokeshi.metersnap
 
-import android.content.res.ColorStateList
+import android.graphics.*
 import android.os.Bundle
 import android.view.View
-import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -14,23 +12,26 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.kokeshi.metersnap.data.ScanHistoryEntry
 import com.kokeshi.metersnap.utils.HistoryManager
-import java.util.Date
 import java.text.SimpleDateFormat
-import java.util.Locale
+import java.util.*
 
 class ProjectionBreakdownActivity : AppCompatActivity() {
 
     private lateinit var toolbar: Toolbar
-    private lateinit var textSummaryTitle: TextView
-    private lateinit var textSummary: TextView
-    private lateinit var textLastActualLabel: TextView
-    private lateinit var textProjectedLabel: TextView
-    private lateinit var progressLastActual: ProgressBar
-    private lateinit var progressProjected: ProgressBar
-    private lateinit var containerTrendRows: LinearLayout
-    private lateinit var textTrendEmpty: TextView
+    private lateinit var chartCanvas: View
+    private lateinit var textChartTitle: TextView
+    private lateinit var textChartSubtitle: TextView
+    private lateinit var textStats: TextView
 
     private lateinit var historyManager: HistoryManager
+
+    // Chart colours
+    private val colorActualLine = Color.parseColor("#4CAF50")   // green
+    private val colorPredictLine = Color.parseColor("#FF9800")  // orange
+    private val colorBaselineLine = Color.parseColor("#9E9E9E") // grey
+    private val colorGrid = Color.parseColor("#2C2C2C")
+    private val colorGainFill = Color.parseColor("#264CAF50")   // semi-transparent green
+    private val colorPredictFill = Color.parseColor("#26FF9800") // semi-transparent orange
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,14 +48,10 @@ class ProjectionBreakdownActivity : AppCompatActivity() {
 
     private fun initializeViews() {
         toolbar = findViewById(R.id.toolbar)
-        textSummaryTitle = findViewById(R.id.text_summary_title)
-        textSummary = findViewById(R.id.text_summary)
-        textLastActualLabel = findViewById(R.id.text_last_actual_label)
-        textProjectedLabel = findViewById(R.id.text_projected_label)
-        progressLastActual = findViewById(R.id.progress_last_actual)
-        progressProjected = findViewById(R.id.progress_projected)
-        containerTrendRows = findViewById(R.id.container_trend_rows)
-        textTrendEmpty = findViewById(R.id.text_trend_empty)
+        chartCanvas = findViewById(R.id.chart_canvas)
+        textChartTitle = findViewById(R.id.text_chart_title)
+        textChartSubtitle = findViewById(R.id.text_chart_subtitle)
+        textStats = findViewById(R.id.text_stats)
     }
 
     private fun setupToolbar() {
@@ -71,15 +68,9 @@ class ProjectionBreakdownActivity : AppCompatActivity() {
     private fun setupWindowInsets() {
         ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
             val statusBarInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(
-                view.paddingLeft,
-                statusBarInsets.top,
-                view.paddingRight,
-                view.paddingBottom
-            )
+            view.setPadding(view.paddingLeft, statusBarInsets.top, view.paddingRight, view.paddingBottom)
             windowInsets
         }
-
         val rootView = findViewById<View>(R.id.root_layout)
         ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
             val systemBars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -87,6 +78,8 @@ class ProjectionBreakdownActivity : AppCompatActivity() {
             windowInsets
         }
     }
+
+    // ── Data loading ──────────────────────────────────────────────────
 
     private fun loadBreakdown() {
         val sourceLabel = intent.getStringExtra("EXTRA_SOURCE_LABEL") ?: "Projection"
@@ -105,116 +98,314 @@ class ProjectionBreakdownActivity : AppCompatActivity() {
         val projectedUsage = projectedInt - previousReading
         val confidencePercent = (confidenceScore * 100).toInt()
 
-        textSummaryTitle.text = "$sourceLabel Projection"
-        textSummary.text = buildString {
-            append("Baseline (Previous): $previousReading m³\n")
-            append("Projected End Reading: $projectedInt m³\n")
-            append("Projected Usage: ~$projectedUsage m³\n")
-            append("Daily Rate: ${String.format(Locale.US, "%.2f", dailyUsageRate)} m³/day\n")
-            append("Confidence: $confidencePercent% ($quality)\n")
-            append("Data Points: $dataPoints")
-            if (rSquared > 0.0) {
-                append("\nR² Fit: ${String.format(Locale.US, "%.3f", rSquared)}")
-            }
-            append("\nMethod: $method")
+        // Header text
+        textChartTitle.text = "$sourceLabel Projection"
+        textChartSubtitle.text = formatMonthDisplay(monthYear)
+
+        // Stats card
+        textStats.text = buildString {
+            append("Baseline (Previous):  $previousReading m³\n")
+            append("Last Scanned:  $lastActualReading m³\n")
+            append("Projected End:  $projectedInt m³\n")
+            append("Projected Usage:  ~$projectedUsage m³\n")
+            append("Daily Rate:  ${String.format(Locale.US, "%.2f", dailyUsageRate)} m³/day\n")
+            append("Confidence:  $confidencePercent%  ($quality)\n")
+            append("Data Points:  $dataPoints")
+            if (rSquared > 0.0) append("\nR² Fit:  ${String.format(Locale.US, "%.3f", rSquared)}")
+            append("\nMethod:  $method")
         }
 
-        textLastActualLabel.text = "Last actual: $lastActualReading m³"
-        textProjectedLabel.text = "Projected: $projectedInt m³"
-
-        val maxValue = maxOf(previousReading, lastActualReading, projectedInt).coerceAtLeast(1)
-        progressLastActual.max = maxValue
-        progressProjected.max = maxValue
-        progressLastActual.progress = lastActualReading.coerceAtLeast(0)
-        progressProjected.progress = projectedInt.coerceAtLeast(0)
-
-        progressLastActual.progressTintList = ColorStateList.valueOf(
-            ContextCompat.getColor(this, android.R.color.holo_blue_light)
-        )
-        progressProjected.progressTintList = ColorStateList.valueOf(
-            ContextCompat.getColor(this, android.R.color.holo_blue_dark)
-        )
-
-        renderTrendGraph(monthYear, previousReading, projectedInt)
-    }
-
-    private fun renderTrendGraph(monthYear: String, previousReading: Int, projectedInt: Int) {
+        // Collect scan points for this billing month
         val monthEntries = historyManager.getAllHistory()
-            .filter { entry -> getMonthKey(entry.timestamp) == monthYear }
+            .filter { getMonthKey(it.timestamp) == monthYear }
             .sortedBy { it.timestamp }
-            .takeLast(7)
 
-        containerTrendRows.removeAllViews()
-
-        if (monthEntries.isEmpty()) {
-            textTrendEmpty.visibility = View.VISIBLE
-            return
-        }
-
-        textTrendEmpty.visibility = View.GONE
-        val maxReading = maxOf(projectedInt, monthEntries.maxOf { it.currentReading })
-        val baseline = previousReading.coerceAtMost(maxReading)
-        val barMax = (maxReading - baseline).coerceAtLeast(1)
-
-        monthEntries.forEachIndexed { index, entry ->
-            val row = createTrendRow(index, monthEntries.size, entry, baseline, barMax)
-            containerTrendRows.addView(row)
+        // Build the chart once the view is laid out and has dimensions
+        chartCanvas.post {
+            drawChart(chartCanvas, previousReading, monthEntries, projectedInt, projectedReading)
         }
     }
 
-    private fun createTrendRow(
-        index: Int,
-        totalCount: Int,
-        entry: ScanHistoryEntry,
+    // ── Chart drawing ─────────────────────────────────────────────────
+
+    private fun drawChart(
+        view: View,
         baseline: Int,
-        barMax: Int
-    ): View {
-        val rowContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            if (index > 0) {
-                setPadding(0, (8 * resources.displayMetrics.density).toInt(), 0, 0)
+        entries: List<ScanHistoryEntry>,
+        projectedInt: Int,
+        projectedDouble: Double
+    ) {
+        val w = view.width
+        val h = view.height
+        if (w == 0 || h == 0) return
+
+        val density = resources.displayMetrics.density
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        // Resolve dark mode
+        val isDark = (resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+
+        val textPrimary = if (isDark) Color.WHITE else Color.DKGRAY
+        val gridColor = if (isDark) Color.parseColor("#333333") else Color.parseColor("#E0E0E0")
+
+        // Chart padding
+        val padLeft = 54 * density
+        val padRight = 16 * density
+        val padTop = 20 * density
+        val padBottom = 36 * density
+        val chartW = w - padLeft - padRight
+        val chartH = h - padTop - padBottom
+
+        // ── Build data series ─────────────────────────────────────────
+        // Timeline: baseline (day 0) → scans → projected end
+        data class ChartPoint(val dayFraction: Float, val reading: Float, val label: String, val isProjected: Boolean)
+
+        val allPoints = mutableListOf<ChartPoint>()
+
+        // Work out time span: from first-of-month to last-of-month (or charge-date boundaries)
+        val cal = Calendar.getInstance()
+        val firstTimestamp: Long
+        val lastTimestamp: Long
+
+        if (entries.isNotEmpty()) {
+            // Use earliest entry date to set the month boundaries
+            cal.timeInMillis = entries.first().timestamp
+        } else {
+            cal.timeInMillis = System.currentTimeMillis()
+        }
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        firstTimestamp = cal.timeInMillis
+
+        cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+        cal.set(Calendar.HOUR_OF_DAY, 23)
+        cal.set(Calendar.MINUTE, 59)
+        cal.set(Calendar.SECOND, 59)
+        lastTimestamp = cal.timeInMillis
+
+        val totalSpanMs = (lastTimestamp - firstTimestamp).toFloat().coerceAtLeast(1f)
+
+        // Baseline at day 0
+        allPoints.add(ChartPoint(0f, baseline.toFloat(), "Start", false))
+
+        // Actual scan points
+        for (entry in entries) {
+            val frac = ((entry.timestamp - firstTimestamp).toFloat() / totalSpanMs).coerceIn(0f, 1f)
+            val dateStr = SimpleDateFormat("d", Locale.US).format(Date(entry.timestamp))
+            allPoints.add(ChartPoint(frac, entry.currentReading.toFloat(), dateStr, false))
+        }
+
+        // Projected endpoint at day 1.0
+        allPoints.add(ChartPoint(1f, projectedDouble.toFloat(), "End", true))
+
+        // ── Y-axis range ──────────────────────────────────────────────
+        val minY = allPoints.minOf { it.reading }
+        val maxY = allPoints.maxOf { it.reading }
+        val yRange = (maxY - minY).coerceAtLeast(1f)
+        // Add 10% padding on both sides
+        val yFloor = minY - yRange * 0.10f
+        val yCeil = maxY + yRange * 0.10f
+        val ySpan = yCeil - yFloor
+
+        fun xOf(frac: Float) = padLeft + frac * chartW
+        fun yOf(reading: Float) = padTop + chartH - ((reading - yFloor) / ySpan) * chartH
+
+        // ── Grid lines ────────────────────────────────────────────────
+        val gridPaint = Paint().apply {
+            color = gridColor
+            strokeWidth = 1f
+            style = Paint.Style.STROKE
+            pathEffect = DashPathEffect(floatArrayOf(4 * density, 4 * density), 0f)
+        }
+        val gridLabelPaint = Paint().apply {
+            color = textPrimary
+            textSize = 9 * density
+            isAntiAlias = true
+            typeface = Typeface.MONOSPACE
+        }
+
+        // Horizontal grid: ~4 lines
+        val gridSteps = 4
+        for (i in 0..gridSteps) {
+            val reading = yFloor + ySpan * i / gridSteps
+            val y = yOf(reading)
+            canvas.drawLine(padLeft, y, padLeft + chartW, y, gridPaint)
+            canvas.drawText(reading.toInt().toString(), 4 * density, y + 4 * density, gridLabelPaint)
+        }
+
+        // Vertical grid: ticks for each week-ish
+        for (week in 0..4) {
+            val frac = week / 4f
+            val x = xOf(frac)
+            canvas.drawLine(x, padTop, x, padTop + chartH, gridPaint)
+        }
+
+        // ── Baseline horizontal line ──────────────────────────────────
+        val baselinePaint = Paint().apply {
+            color = colorBaselineLine
+            strokeWidth = 1.5f * density
+            style = Paint.Style.STROKE
+            pathEffect = DashPathEffect(floatArrayOf(6 * density, 4 * density), 0f)
+            isAntiAlias = true
+        }
+        val baselineY = yOf(baseline.toFloat())
+        canvas.drawLine(padLeft, baselineY, padLeft + chartW, baselineY, baselinePaint)
+
+        // ── Actual data line + fill ───────────────────────────────────
+        val actualPoints = allPoints.filter { !it.isProjected }
+        if (actualPoints.size >= 2) {
+            val linePaint = Paint().apply {
+                color = colorActualLine
+                strokeWidth = 2.5f * density
+                style = Paint.Style.STROKE
+                isAntiAlias = true
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            }
+            val fillPath = Path()
+            val linePath = Path()
+            val firstX = xOf(actualPoints.first().dayFraction)
+            val firstYy = yOf(actualPoints.first().reading)
+            linePath.moveTo(firstX, firstYy)
+            fillPath.moveTo(firstX, yOf(yFloor))
+            fillPath.lineTo(firstX, firstYy)
+
+            for (i in 1 until actualPoints.size) {
+                val px = xOf(actualPoints[i].dayFraction)
+                val py = yOf(actualPoints[i].reading)
+                linePath.lineTo(px, py)
+                fillPath.lineTo(px, py)
+            }
+            val lastActualX = xOf(actualPoints.last().dayFraction)
+            fillPath.lineTo(lastActualX, yOf(yFloor))
+            fillPath.close()
+
+            val fillPaint = Paint().apply {
+                shader = LinearGradient(
+                    0f, padTop, 0f, padTop + chartH,
+                    colorGainFill, Color.TRANSPARENT, Shader.TileMode.CLAMP
+                )
+                style = Paint.Style.FILL
+                isAntiAlias = true
+            }
+            canvas.drawPath(fillPath, fillPaint)
+            canvas.drawPath(linePath, linePaint)
+        }
+
+        // ── Prediction dashed line + fill from last actual → end ──────
+        val lastActual = actualPoints.lastOrNull()
+        val predictionPoint = allPoints.last()
+        if (lastActual != null) {
+            val predLinePaint = Paint().apply {
+                color = colorPredictLine
+                strokeWidth = 2.5f * density
+                style = Paint.Style.STROKE
+                isAntiAlias = true
+                pathEffect = DashPathEffect(floatArrayOf(8 * density, 5 * density), 0f)
+                strokeCap = Paint.Cap.ROUND
+            }
+            val startX = xOf(lastActual.dayFraction)
+            val startYy = yOf(lastActual.reading)
+            val endX = xOf(predictionPoint.dayFraction)
+            val endYy = yOf(predictionPoint.reading)
+
+            canvas.drawLine(startX, startYy, endX, endYy, predLinePaint)
+
+            // Fill under prediction segment
+            val predFill = Path().apply {
+                moveTo(startX, yOf(yFloor))
+                lineTo(startX, startYy)
+                lineTo(endX, endYy)
+                lineTo(endX, yOf(yFloor))
+                close()
+            }
+            val predFillPaint = Paint().apply {
+                shader = LinearGradient(
+                    0f, padTop, 0f, padTop + chartH,
+                    colorPredictFill, Color.TRANSPARENT, Shader.TileMode.CLAMP
+                )
+                style = Paint.Style.FILL
+                isAntiAlias = true
+            }
+            canvas.drawPath(predFill, predFillPaint)
+        }
+
+        // ── Dots + value labels ───────────────────────────────────────
+        val dotRadius = 4.5f * density
+        val dotStroke = 2f * density
+        val dotOuterPaint = Paint().apply {
+            style = Paint.Style.STROKE
+            strokeWidth = dotStroke
+            isAntiAlias = true
+        }
+        val dotFillPaint = Paint().apply {
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val valueLabelPaint = Paint().apply {
+            color = textPrimary
+            textSize = 10 * density
+            isAntiAlias = true
+            typeface = Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+        }
+        val dateLabelPaint = Paint().apply {
+            color = textPrimary
+            textSize = 9 * density
+            isAntiAlias = true
+            textAlign = Paint.Align.CENTER
+        }
+
+        for (pt in allPoints) {
+            val cx = xOf(pt.dayFraction)
+            val cy = yOf(pt.reading)
+            val col = if (pt.isProjected) colorPredictLine else colorActualLine
+
+            dotFillPaint.color = if (isDark) Color.parseColor("#1E1E1E") else Color.WHITE
+            dotOuterPaint.color = col
+            canvas.drawCircle(cx, cy, dotRadius, dotFillPaint)
+            canvas.drawCircle(cx, cy, dotRadius, dotOuterPaint)
+
+            // Value above dot
+            canvas.drawText(pt.reading.toInt().toString(), cx, cy - 8 * density, valueLabelPaint)
+
+            // Date label below axis
+            if (pt.label.isNotEmpty()) {
+                canvas.drawText(pt.label, cx, padTop + chartH + 14 * density, dateLabelPaint)
             }
         }
 
-        val label = TextView(this).apply {
-            val dateLabel = SimpleDateFormat("MMM d", Locale.getDefault()).format(entry.timestamp)
-            text = "$dateLabel • ${entry.currentReading} m³"
-            textSize = 12f
-            setTextColor(currentTextColorSecondary())
+        // ── X-axis line ───────────────────────────────────────────────
+        val axisPaint = Paint().apply {
+            color = textPrimary
+            strokeWidth = 1f
+            style = Paint.Style.STROKE
         }
+        canvas.drawLine(padLeft, padTop + chartH, padLeft + chartW, padTop + chartH, axisPaint)
 
-        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                (10 * resources.displayMetrics.density).toInt()
-            )
-            max = barMax
-            progress = (entry.currentReading - baseline).coerceAtLeast(0)
-            progressTintList = ColorStateList.valueOf(
-                if (index == totalCount - 1) {
-                    ContextCompat.getColor(this@ProjectionBreakdownActivity, android.R.color.holo_blue_dark)
-                } else {
-                    ContextCompat.getColor(this@ProjectionBreakdownActivity, android.R.color.holo_blue_light)
-                }
-            )
-        }
-
-        rowContainer.addView(label)
-        rowContainer.addView(bar)
-        return rowContainer
+        // Apply to the view as background
+        view.background = android.graphics.drawable.BitmapDrawable(resources, bitmap)
     }
+
+    // ── Helpers ───────────────────────────────────────────────────────
 
     private fun getMonthKey(timestamp: Long): String {
         return SimpleDateFormat("yyyy-MM", Locale.US).format(Date(timestamp))
     }
 
-    private fun currentTextColorSecondary(): Int {
-        val value = android.util.TypedValue()
-        theme.resolveAttribute(android.R.attr.textColorSecondary, value, true)
-        return if (value.resourceId != 0) {
-            ContextCompat.getColor(this, value.resourceId)
-        } else {
-            value.data
+    private fun formatMonthDisplay(monthYear: String): String {
+        return try {
+            val inputFormat = SimpleDateFormat("yyyy-MM", Locale.US)
+            val outputFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+            val date = inputFormat.parse(monthYear)
+            date?.let { outputFormat.format(it) } ?: monthYear
+        } catch (e: Exception) {
+            monthYear
         }
     }
 }

@@ -209,6 +209,56 @@ class ProjectedReadingManager(private val context: Context) {
     }
     
     /**
+     * Recalculate projections after a history entry is edited or deleted.
+     * Updates both the affected month's projection and the current month's projection
+     * (since current month may depend on previous month data for the SMART approach).
+     */
+    fun recalculateProjectionsAfterHistoryChange(entryTimestamp: Long) {
+        val calendar = Calendar.getInstance()
+        calendar.timeInMillis = entryTimestamp
+        val entryYear = calendar.get(Calendar.YEAR)
+        val entryMonth = calendar.get(Calendar.MONTH) + 1
+        
+        recalculateProjectionForMonth(entryYear, entryMonth)
+        
+        // Also recalculate current month if different (current month may depend on prev month data)
+        val now = Calendar.getInstance()
+        val currentYear = now.get(Calendar.YEAR)
+        val currentMonth = now.get(Calendar.MONTH) + 1
+        if (entryYear != currentYear || entryMonth != currentMonth) {
+            recalculateProjectionForMonth(currentYear, currentMonth)
+        }
+        
+        Log.d(TAG, "Recalculated projections after history change for $entryYear-${String.format("%02d", entryMonth)}")
+    }
+    
+    /**
+     * Recalculate projection for a specific month based on current history data.
+     * If no history data remains for this month, the projection is cleared.
+     */
+    fun recalculateProjectionForMonth(year: Int, month: Int) {
+        val projection = predictor.predictMonthEndReading(year, month)
+        if (projection != null) {
+            saveProjection(projection, forceReplace = true)
+        } else {
+            clearProjection(year, month)
+        }
+        Log.d(TAG, "Recalculated projection for $year-${String.format("%02d", month)}: ${projection?.projectedReading ?: "cleared"}")
+    }
+    
+    /**
+     * Recalculate projection for a month identified by key (e.g., "2026-01").
+     */
+    fun recalculateProjectionForMonthKey(monthKey: String) {
+        val parts = monthKey.split("-")
+        if (parts.size == 2) {
+            val year = parts[0].toIntOrNull() ?: return
+            val month = parts[1].toIntOrNull() ?: return
+            recalculateProjectionForMonth(year, month)
+        }
+    }
+    
+    /**
      * Get statistics about projection accuracy.
      * Compares predictions with actual readings when both are available.
      */

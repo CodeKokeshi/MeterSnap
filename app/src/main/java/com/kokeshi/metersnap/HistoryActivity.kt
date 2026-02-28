@@ -66,6 +66,12 @@ class HistoryActivity : AppCompatActivity() {
         setupListeners()
     }
     
+    override fun onResume() {
+        super.onResume()
+        // Refresh history list when returning from edit/delete
+        loadHistory()
+    }
+    
     private fun setupWindowInsets() {
         // Apply status bar inset to toolbar only
         ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
@@ -294,6 +300,9 @@ class HistoryActivity : AppCompatActivity() {
         } else {
             historyManager.clearMonthHistory(monthKey)
         }
+        // Recalculate projections for the cleared month and current month
+        projectedReadingManager.recalculateProjectionForMonthKey(monthKey)
+        projectedReadingManager.updateCurrentMonthProjection()
         loadHistory()
         Toast.makeText(this, "Period cleared. Backup saved in Session Logs", Toast.LENGTH_SHORT).show()
     }
@@ -328,6 +337,7 @@ class HistoryActivity : AppCompatActivity() {
             // Open BillComparisonActivity with both CWD and App data
             val intent = Intent(this, BillComparisonActivity::class.java).apply {
                 putExtra("HISTORY_ID", entry.id) // Pass the history entry ID
+                putExtra("ORIGINAL_TIMESTAMP", entry.timestamp) // Preserve original timestamp
                 putExtra("CURRENT_READING", entry.currentReading)
                 putExtra("PREVIOUS_READING", entry.previousReading)
                 putExtra("RATE_TYPE", entry.rateType)
@@ -371,6 +381,7 @@ class HistoryActivity : AppCompatActivity() {
             // Open BillResultActivity for single bill (Bill Details)
             val intent = Intent(this, BillResultActivity::class.java).apply {
                 putExtra("HISTORY_ID", entry.id) // Pass the history entry ID
+                putExtra("ORIGINAL_TIMESTAMP", entry.timestamp) // Preserve original timestamp
                 putExtra("CURRENT_READING", entry.currentReading)
                 putExtra("PREVIOUS_READING", entry.previousReading)
                 putExtra("RATE_TYPE", entry.rateType)
