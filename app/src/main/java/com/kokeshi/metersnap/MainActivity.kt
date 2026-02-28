@@ -31,6 +31,7 @@ import com.kokeshi.metersnap.utils.BillCalculator
 import com.kokeshi.metersnap.utils.RatePreferences
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.BillCalculator.BillResult
+import com.kokeshi.metersnap.utils.ChargeDateHelper
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.utils.RateTableManager
 import com.kokeshi.metersnap.notifications.EndOfMonthReminderScheduler
@@ -74,9 +75,11 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val CAMERA_PERMISSION_CODE = 100
+        private const val PREFS_NAME = "MeterSnapPrefs"
         private const val PREF_TUTORIAL_COMPLETED = "tutorial_completed"
         private const val PREF_PREVIOUS_READING = "previous_reading"
         private const val PREF_PREVIOUS_READING_SET = "previous_reading_set"
+        private const val PREF_PREVIOUS_READING_PERIOD_KEY = "previous_reading_period_key"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -559,20 +562,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkAndShowTutorial() {
-        val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val previousReadingSet = prefs.getBoolean(PREF_PREVIOUS_READING_SET, false)
         val tutorialCompleted = prefs.getBoolean(PREF_TUTORIAL_COMPLETED, false)
         val chargeDateSet = prefs.getBoolean("charge_date_set", false)
+        val requiresNewBillingPeriodReading = chargeDateSet && needsBillingPeriodReadingUpdate(prefs)
         
         if (!chargeDateSet) {
             // First run: Ask for charge date first
             findViewById<android.view.View>(R.id.main).postDelayed({
                 showChargeDateDialog()
             }, 500)
-        } else if (!previousReadingSet) {
-            // First run: Ask for previous reading
+        } else if (!previousReadingSet || requiresNewBillingPeriodReading) {
+            // First run or new billing period: ask for previous reading (receipt present reading)
             findViewById<android.view.View>(R.id.main).postDelayed({
-                showPreviousReadingDialog()
+                showPreviousReadingDialog(requiresNewBillingPeriodReading)
             }, 500)
         } else if (!tutorialCompleted) {
             // Second step: Show tutorial
@@ -591,10 +595,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showPreviousReadingDialog() {
+    private fun needsBillingPeriodReadingUpdate(prefs: android.content.SharedPreferences): Boolean {
+        val chargeDate = ChargeDateHelper.getChargeDate(this)
+        val currentPeriodKey = ChargeDateHelper.getCurrentBillingPeriodKey(chargeDate)
+        val savedPeriodKey = prefs.getString(PREF_PREVIOUS_READING_PERIOD_KEY, null)
+        return currentPeriodKey != savedPeriodKey
+    }
+
+    private fun showPreviousReadingDialog(isBillingPeriodRollover: Boolean = false) {
         val builder = AlertDialog.Builder(this)
-        builder.setTitle("Welcome to MeterSnap")
-        builder.setMessage("To calculate your bill accurately, please enter the Previous Reading from your last water bill.\n\nYou can change this later in Settings.")
+        builder.setTitle(if (isBillingPeriodRollover) "New Billing Period Detected" else "Welcome to MeterSnap")
+        builder.setMessage(
+            if (isBillingPeriodRollover) {
+                "A new billing period started after your charge date.\n\n" +
+                    "Please enter the receipt's Present Reading (not the old Previous Reading).\n\n" +
+                    "Example: If receipt covers Dec 27 - Jan 28 and today is Jan 29, use Jan 28 Present Reading."
+            } else {
+                "To calculate your bill accurately, enter the receipt's Present Reading as your baseline Previous Reading.\n\n" +
+                    "Important: Do not use the old Previous Reading printed on the receipt."
+            }
+        )
 
         val input = EditText(this)
         input.inputType = InputType.TYPE_CLASS_NUMBER
@@ -615,25 +635,38 @@ class MainActivity : AppCompatActivity() {
             if (text.isNotEmpty()) {
                 val reading = text.toIntOrNull()
                 if (reading != null) {
-                    val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
+                    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val chargeDate = ChargeDateHelper.getChargeDate(this)
+                    val currentPeriodKey = ChargeDateHelper.getCurrentBillingPeriodKey(chargeDate)
                     prefs.edit()
                         .putInt(PREF_PREVIOUS_READING, reading)
                         .putBoolean(PREF_PREVIOUS_READING_SET, true)
+                        .putString(PREF_PREVIOUS_READING_PERIOD_KEY, currentPeriodKey)
                         .apply()
                     
                     // Update analyzer if it exists
                     meterAnalyzer?.setPreviousReading(reading)
                     
-                    Toast.makeText(this, "Previous reading saved!", Toast.LENGTH_SHORT).show()
-                    // Proceed to tutorial
-                    startTutorial()
+                    Toast.makeText(this, "Previous reading saved for current billing period", Toast.LENGTH_SHORT).show()
+
+                    if (!prefs.getBoolean(PREF_TUTORIAL_COMPLETED, false)) {
+                        startTutorial()
+                    } else {
+                        if (hasAllRequiredPermissions()) {
+                            startCamera()
+                            scanLine.visibility = android.view.View.VISIBLE
+                            startScanAnimation()
+                        } else {
+                            requestAllRequiredPermissions()
+                        }
+                    }
                 } else {
                     Toast.makeText(this, "Invalid number", Toast.LENGTH_SHORT).show()
-                    showPreviousReadingDialog() // Retry
+                    showPreviousReadingDialog(isBillingPeriodRollover) // Retry
                 }
             } else {
                 Toast.makeText(this, "Please enter a reading", Toast.LENGTH_SHORT).show()
-                showPreviousReadingDialog() // Retry
+                showPreviousReadingDialog(isBillingPeriodRollover) // Retry
             }
         }
         

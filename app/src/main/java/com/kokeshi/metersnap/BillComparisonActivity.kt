@@ -84,6 +84,7 @@ class BillComparisonActivity : AppCompatActivity() {
     private var appPredictedPreviousReading: Int? = null
     private var rateType: String = "RESIDENTIAL"
     private var isFromHistory: Boolean = false
+    private var isCalculatorMode: Boolean = false
     
     // Session tracking - prevents duplicates
     private var sessionId: String = UUID.randomUUID().toString()
@@ -116,7 +117,7 @@ class BillComparisonActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         // Auto-save to history when leaving the activity (but only once)
-        if (!historySaved && !isFromHistory) {
+        if (!historySaved && !isFromHistory && !isCalculatorMode) {
             saveBothBillsToHistory()
         }
     }
@@ -218,6 +219,7 @@ class BillComparisonActivity : AppCompatActivity() {
         cwdPreviousReading = intent.getIntExtra("PREVIOUS_READING", 0)
         rateType = intent.getStringExtra("RATE_TYPE") ?: "RESIDENTIAL"
         isFromHistory = intent.getBooleanExtra("FROM_HISTORY", false)
+        isCalculatorMode = intent.getBooleanExtra("CALCULATOR_MODE", false)
         
         if (isFromHistory) {
             // Use the existing history entry ID if provided
@@ -231,6 +233,12 @@ class BillComparisonActivity : AppCompatActivity() {
             } else {
                 null
             }
+        } else if (isCalculatorMode) {
+            sessionId = UUID.randomUUID().toString()
+            historySaved = true // Temporary calculator flow - do not persist
+
+            // Keep comparison feature if app projection exists
+            appPredictedPreviousReading = projectedReadingManager.getAppPredictedPreviousReading()
         } else {
             // New calculation - generate fresh session ID
             sessionId = UUID.randomUUID().toString()
@@ -240,7 +248,7 @@ class BillComparisonActivity : AppCompatActivity() {
             appPredictedPreviousReading = projectedReadingManager.getAppPredictedPreviousReading()
         }
         
-        Log.d(TAG, "Loaded: current=$currentReading, cwdPrev=$cwdPreviousReading, appPrev=$appPredictedPreviousReading, fromHistory=$isFromHistory, sessionId=$sessionId")
+        Log.d(TAG, "Loaded: current=$currentReading, cwdPrev=$cwdPreviousReading, appPrev=$appPredictedPreviousReading, fromHistory=$isFromHistory, calculatorMode=$isCalculatorMode, sessionId=$sessionId")
     }
 
     private fun calculateDualBills() {
@@ -450,7 +458,11 @@ class BillComparisonActivity : AppCompatActivity() {
         if (!dualComparison.hasPrediction) {
             tabLayout.getTabAt(1)?.view?.visibility = View.GONE
             tabLayout.visibility = View.GONE // Hide entire tab layout
-            toolbar.title = if (isFromHistory) "Bill Details" else "Bill Calculation"
+            toolbar.title = when {
+                isFromHistory -> "Bill Details"
+                isCalculatorMode -> "Bill Calculator"
+                else -> "Bill Calculation"
+            }
         }
     }
     

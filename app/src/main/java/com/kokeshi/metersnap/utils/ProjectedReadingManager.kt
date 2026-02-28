@@ -203,6 +203,10 @@ class ProjectedReadingManager(private val context: Context) {
     fun clearAllProjections() {
         prefs.edit().remove(KEY_PROJECTIONS).apply()
     }
+
+    fun replaceAllProjections(projections: Map<String, ProjectedReading>) {
+        saveProjections(projections)
+    }
     
     /**
      * Get statistics about projection accuracy.

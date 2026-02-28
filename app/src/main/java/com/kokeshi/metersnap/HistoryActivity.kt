@@ -19,9 +19,11 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.kokeshi.metersnap.data.ScanHistoryEntry
+import com.kokeshi.metersnap.data.SessionArchive
 import com.kokeshi.metersnap.utils.ChargeDateHelper
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
+import com.kokeshi.metersnap.utils.SessionLogManager
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -34,7 +36,10 @@ class HistoryActivity : AppCompatActivity() {
     private lateinit var btnSort: ImageButton
     private lateinit var historyManager: HistoryManager
     private lateinit var projectedReadingManager: ProjectedReadingManager
+    private lateinit var sessionLogManager: SessionLogManager
     private lateinit var adapter: GroupedHistoryAdapter
+    private var viewingArchive: Boolean = false
+    private var activeArchive: SessionArchive? = null
     
     // true = most recent month first (default), false = oldest month first
     private var sortDescending: Boolean = true
@@ -46,6 +51,13 @@ class HistoryActivity : AppCompatActivity() {
 
         historyManager = HistoryManager(this)
         projectedReadingManager = ProjectedReadingManager(this)
+        sessionLogManager = SessionLogManager(this)
+
+        val archiveId = intent.getStringExtra("SESSION_ARCHIVE_ID")
+        if (!archiveId.isNullOrBlank()) {
+            activeArchive = sessionLogManager.getArchiveById(archiveId)
+            viewingArchive = activeArchive != null
+        }
 
         initializeViews()
         setupToolbar()
@@ -90,7 +102,7 @@ class HistoryActivity : AppCompatActivity() {
         setSupportActionBar(toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
-        supportActionBar?.title = "History Logs"
+        supportActionBar?.title = if (viewingArchive) "Session History" else "History Logs"
 
         ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
             val statusBarInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -110,16 +122,26 @@ class HistoryActivity : AppCompatActivity() {
     }
 
     private fun loadHistory() {
-        val history = historyManager.getAllHistory()
+        val history = if (viewingArchive) {
+            activeArchive?.historyEntries ?: emptyList()
+        } else {
+            historyManager.getAllHistory()
+        }
 
         if (history.isEmpty()) {
             recyclerView.visibility = View.GONE
             emptyView.visibility = View.VISIBLE
             btnClearHistory.visibility = View.GONE
+            emptyView.text = if (viewingArchive) {
+                "No history in this session archive."
+            } else {
+                "No scan history yet.\n\nSuccessful scans will appear here."
+            }
         } else {
             recyclerView.visibility = View.VISIBLE
             emptyView.visibility = View.GONE
             btnClearHistory.visibility = View.VISIBLE
+            btnClearHistory.text = if (viewingArchive) "Restore This Session" else "Clear History Logs"
 
             // Group history by month
             val groupedItems = groupHistoryByMonth(history)
@@ -127,7 +149,8 @@ class HistoryActivity : AppCompatActivity() {
             adapter = GroupedHistoryAdapter(
                 items = groupedItems,
                 onEntryClick = { entry -> openBillBreakdown(entry) },
-                onClearMonthClick = { monthKey -> showClearMonthDialog(monthKey) }
+                onClearMonthClick = { monthKey -> showClearMonthDialog(monthKey) },
+                showClearMonthAction = !viewingArchive
             )
             recyclerView.adapter = adapter
         }
@@ -194,7 +217,11 @@ class HistoryActivity : AppCompatActivity() {
     
     private fun setupListeners() {
         btnClearHistory.setOnClickListener {
-            showClearHistoryDialog()
+            if (viewingArchive) {
+                showRestoreSessionDialog()
+            } else {
+                showClearHistoryDialog()
+            }
         }
         
         btnSort.setOnClickListener {
@@ -206,7 +233,11 @@ class HistoryActivity : AppCompatActivity() {
     private fun showClearHistoryDialog() {
         AlertDialog.Builder(this)
             .setTitle("Clear All History?")
-            .setMessage("This will permanently delete all scan history and projected readings. This action cannot be undone.\n\nAre you sure?")
+            .setMessage(
+                "This will move current history into Session Logs and then clear active history + projections.\n\n" +
+                    "You can review archived sessions in:\n" +
+                    "Settings > History and Readings > Session Logs"
+            )
             .setPositiveButton("Clear All") { _, _ ->
                 clearAllHistory()
             }
@@ -216,10 +247,11 @@ class HistoryActivity : AppCompatActivity() {
     }
     
     private fun clearAllHistory() {
+        sessionLogManager.archiveCurrentSession("clear_all_history")
         historyManager.clearAllHistory()
         projectedReadingManager.clearAllProjections()
         loadHistory()
-        Toast.makeText(this, "All history cleared successfully", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "History archived to Session Logs and cleared", Toast.LENGTH_SHORT).show()
     }
     
     private fun showClearMonthDialog(monthKey: String) {
@@ -241,7 +273,10 @@ class HistoryActivity : AppCompatActivity() {
         
         AlertDialog.Builder(this)
             .setTitle("Clear $monthDisplay?")
-            .setMessage("This will delete all scan entries for $monthDisplay. This action cannot be undone.")
+            .setMessage(
+                "This will archive your current session, then clear entries for $monthDisplay from active history.\n\n" +
+                    "Archived session can be viewed in:\nSettings > History and Readings > Session Logs"
+            )
             .setPositiveButton("Clear Month") { _, _ ->
                 clearMonthHistory(monthKey)
             }
@@ -251,6 +286,7 @@ class HistoryActivity : AppCompatActivity() {
     }
     
     private fun clearMonthHistory(monthKey: String) {
+        sessionLogManager.archiveCurrentSession("clear_period_history")
         val chargeDateSet = ChargeDateHelper.isChargeDateSet(this)
         if (chargeDateSet) {
             val chargeDate = ChargeDateHelper.getChargeDate(this)
@@ -259,7 +295,28 @@ class HistoryActivity : AppCompatActivity() {
             historyManager.clearMonthHistory(monthKey)
         }
         loadHistory()
-        Toast.makeText(this, "Period history cleared", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Period cleared. Backup saved in Session Logs", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showRestoreSessionDialog() {
+        val archive = activeArchive ?: return
+        AlertDialog.Builder(this)
+            .setTitle("Restore This Session?")
+            .setMessage(
+                "This will restore ${archive.label} into active history.\n\n" +
+                    "Your current active session will be backed up first into Session Logs."
+            )
+            .setPositiveButton("Restore") { _, _ ->
+                val restored = sessionLogManager.restoreArchive(archive.id)
+                if (restored) {
+                    Toast.makeText(this, "Session restored. Current session backed up to Session Logs", Toast.LENGTH_LONG).show()
+                    finish()
+                } else {
+                    Toast.makeText(this, "Unable to restore this session", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun openBillBreakdown(entry: ScanHistoryEntry) {
@@ -354,7 +411,8 @@ class HistoryActivity : AppCompatActivity() {
     private class GroupedHistoryAdapter(
         private val items: List<HistoryListItem>,
         private val onEntryClick: (ScanHistoryEntry) -> Unit,
-        private val onClearMonthClick: (String) -> Unit
+        private val onClearMonthClick: (String) -> Unit,
+        private val showClearMonthAction: Boolean
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
         companion object {
@@ -386,7 +444,7 @@ class HistoryActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             when (val item = items[position]) {
-                is HistoryListItem.Header -> (holder as HeaderViewHolder).bind(item, onClearMonthClick)
+                is HistoryListItem.Header -> (holder as HeaderViewHolder).bind(item, onClearMonthClick, showClearMonthAction)
                 is HistoryListItem.Entry -> (holder as EntryViewHolder).bind(item.entry, onEntryClick)
             }
         }
@@ -398,13 +456,22 @@ class HistoryActivity : AppCompatActivity() {
             private val textMonthSummary: TextView = itemView.findViewById(R.id.text_month_summary)
             private val btnClearMonth: ImageButton = itemView.findViewById(R.id.btn_clear_month)
 
-            fun bind(header: HistoryListItem.Header, onClearClick: (String) -> Unit) {
+            fun bind(
+                header: HistoryListItem.Header,
+                onClearClick: (String) -> Unit,
+                showClearMonthAction: Boolean
+            ) {
                 textMonthHeader.text = header.monthDisplay
                 val scanText = if (header.scanCount == 1) "1 scan" else "${header.scanCount} scans"
                 textMonthSummary.text = "$scanText • Total usage: ${header.totalUsage} m³"
-                
-                btnClearMonth.setOnClickListener {
-                    onClearClick(header.monthKey)
+
+                if (showClearMonthAction) {
+                    btnClearMonth.visibility = View.VISIBLE
+                    btnClearMonth.setOnClickListener {
+                        onClearClick(header.monthKey)
+                    }
+                } else {
+                    btnClearMonth.visibility = View.GONE
                 }
             }
         }

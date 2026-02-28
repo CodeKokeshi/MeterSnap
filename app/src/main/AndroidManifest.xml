@@ -53,6 +53,12 @@
             android:exported="false"
             android:parentActivityName=".HistorySettingsActivity"
             android:theme="@style/Theme.MeterSnap" />
+
+        <activity
+            android:name=".SessionLogsActivity"
+            android:exported="false"
+            android:parentActivityName=".HistorySettingsActivity"
+            android:theme="@style/Theme.MeterSnap" />
         
         <activity
             android:name=".HistorySettingsActivity"
@@ -76,6 +82,12 @@
             android:name=".BillComparisonActivity"
             android:exported="false"
             android:parentActivityName=".ManualInputActivity"
+            android:theme="@style/Theme.MeterSnap" />
+
+        <activity
+            android:name=".ProjectionBreakdownActivity"
+            android:exported="false"
+            android:parentActivityName=".HistorySettingsActivity"
             android:theme="@style/Theme.MeterSnap" />
         
         <!-- End-of-month reminder broadcast receiver -->

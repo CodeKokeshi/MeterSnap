@@ -343,6 +343,14 @@
                 android:text="View History Logs"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
 
+            <Button
+                android:id="@+id/btn_session_logs"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="View Session Logs"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
+
             <!-- Prediction Stats Card -->
             <androidx.cardview.widget.CardView
                 android:id="@+id/card_prediction_stats"

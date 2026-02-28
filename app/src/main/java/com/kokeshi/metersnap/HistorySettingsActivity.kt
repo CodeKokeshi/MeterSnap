@@ -18,6 +18,7 @@ import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.textfield.TextInputEditText
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
+import com.kokeshi.metersnap.utils.SessionResetManager
 import com.kokeshi.metersnap.data.ProjectedReading
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -45,6 +46,7 @@ class HistorySettingsActivity : AppCompatActivity() {
     private lateinit var textProjectedApp: TextView
     private lateinit var textProjectedAppDetails: TextView
     private lateinit var btnHistoryLogs: Button
+    private lateinit var btnSessionLogs: Button
     private lateinit var cardPredictionStats: CardView
     private lateinit var textPredictionStats: TextView
 
@@ -55,6 +57,8 @@ class HistorySettingsActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "MeterSnapPrefs"
         private const val PREF_PREVIOUS_READING = "previous_reading"
+        private const val PREF_PREVIOUS_READING_PERIOD_KEY = "previous_reading_period_key"
+        private const val MAX_REASONABLE_PREVIOUS_READING_STEP = 40
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -114,6 +118,7 @@ class HistorySettingsActivity : AppCompatActivity() {
         textProjectedApp = findViewById(R.id.text_projected_app)
         textProjectedAppDetails = findViewById(R.id.text_projected_app_details)
         btnHistoryLogs = findViewById(R.id.btn_history_logs)
+        btnSessionLogs = findViewById(R.id.btn_session_logs)
         cardPredictionStats = findViewById(R.id.card_prediction_stats)
         textPredictionStats = findViewById(R.id.text_prediction_stats)
     }
@@ -207,8 +212,8 @@ class HistorySettingsActivity : AppCompatActivity() {
             
             // Make clickable to show breakdown
             val projectionCopy = cwdProjection
-            textProjectedCwd.setOnClickListener { showProjectionBreakdown(projectionCopy, cwdPrev, "CWD") }
-            textProjectedCwdDetails.setOnClickListener { showProjectionBreakdown(projectionCopy, cwdPrev, "CWD") }
+            textProjectedCwd.setOnClickListener { openProjectionBreakdown(projectionCopy, cwdPrev, "CWD") }
+            textProjectedCwdDetails.setOnClickListener { openProjectionBreakdown(projectionCopy, cwdPrev, "CWD") }
         } else {
             textProjectedCwd.text = "Not enough data"
             textProjectedCwdDetails.text = "Need at least 2 scans this month"
@@ -226,8 +231,8 @@ class HistorySettingsActivity : AppCompatActivity() {
             
             // Make clickable to show breakdown
             val projectionCopy = cwdProjection
-            textProjectedApp.setOnClickListener { showProjectionBreakdown(projectionCopy, appPrevious, "App") }
-            textProjectedAppDetails.setOnClickListener { showProjectionBreakdown(projectionCopy, appPrevious, "App") }
+            textProjectedApp.setOnClickListener { openProjectionBreakdown(projectionCopy, appPrevious, "App") }
+            textProjectedAppDetails.setOnClickListener { openProjectionBreakdown(projectionCopy, appPrevious, "App") }
         } else {
             textProjectedApp.text = "Not enough data"
             textProjectedAppDetails.text = "Need previous month's data"
@@ -260,6 +265,10 @@ class HistorySettingsActivity : AppCompatActivity() {
 
         btnHistoryLogs.setOnClickListener {
             startActivity(Intent(this, HistoryActivity::class.java))
+        }
+
+        btnSessionLogs.setOnClickListener {
+            startActivity(Intent(this, SessionLogsActivity::class.java))
         }
     }
 
@@ -317,18 +326,19 @@ class HistorySettingsActivity : AppCompatActivity() {
 
         AlertDialog.Builder(this)
             .setTitle("Edit CWD Previous Reading")
-            .setMessage("Enter the previous reading from your CWD bill:")
+            .setMessage(
+                "Enter your receipt's Present Reading (this becomes app Previous Reading baseline).\n\n" +
+                    "Do not use the old Previous Reading field from the same receipt."
+            )
             .setView(dialogView)
             .setPositiveButton("Save") { _, _ ->
                 val newValue = editText.text.toString().toIntOrNull()
                 if (newValue != null && newValue >= 0) {
-                    prefs.edit()
-                        .putInt(PREF_PREVIOUS_READING, newValue)
-                        .putBoolean("previous_reading_set", true)
-                        .apply()
-                    loadCwdPreviousReading()
-                    loadProjections() // Recalculate projections
-                    Toast.makeText(this, "Previous reading updated", Toast.LENGTH_SHORT).show()
+                    if (shouldPromptNewSession(currentValue, newValue)) {
+                        showNewSessionSuggestionDialog(newValue)
+                    } else {
+                        applyPreviousReadingUpdate(newValue)
+                    }
                 } else {
                     Toast.makeText(this, "Please enter a valid number", Toast.LENGTH_SHORT).show()
                 }
@@ -338,66 +348,64 @@ class HistorySettingsActivity : AppCompatActivity() {
     }
 
     /**
-     * Show detailed breakdown of how projection was calculated
+     * Open dedicated projection breakdown scene with visual trend and metrics.
      */
-    private fun showProjectionBreakdown(projection: ProjectedReading, previousReading: Int, source: String) {
-        val calendar = Calendar.getInstance()
-        val monthName = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(calendar.time)
-        val chargeDate = prefs.getInt("charge_date", -1)
-        val chargeDateSet = prefs.getBoolean("charge_date_set", false)
-        
-        val targetDay: Int
-        val daysLeft: Int
-        val currentDay = calendar.get(Calendar.DAY_OF_MONTH)
-        
-        if (chargeDateSet && chargeDate > 0) {
-            targetDay = chargeDate
-            daysLeft = com.kokeshi.metersnap.utils.ChargeDateHelper.getDaysUntilChargeDate(chargeDate)
-        } else {
-            targetDay = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
-            daysLeft = targetDay - currentDay
+    private fun openProjectionBreakdown(projection: ProjectedReading, previousReading: Int, source: String) {
+        val intent = Intent(this, ProjectionBreakdownActivity::class.java).apply {
+            putExtra("EXTRA_SOURCE_LABEL", source)
+            putExtra("EXTRA_MONTH_YEAR", projection.monthYear)
+            putExtra("EXTRA_PROJECTED_READING", projection.projectedReading)
+            putExtra("EXTRA_PREVIOUS_READING", previousReading)
+            putExtra("EXTRA_LAST_ACTUAL_READING", projection.lastActualReading)
+            putExtra("EXTRA_CONFIDENCE", projection.confidenceScore)
+            putExtra("EXTRA_DAILY_RATE", projection.dailyUsageRate)
+            putExtra("EXTRA_DATA_POINTS", projection.dataPointsUsed)
+            putExtra("EXTRA_R_SQUARED", projection.rSquared)
+            putExtra("EXTRA_QUALITY", projection.getQualityDescription())
+            putExtra("EXTRA_METHOD", projection.source.name)
         }
-        
-        val projectedInt = projection.projectedReading.toInt()
-        val projectedUsage = projectedInt - previousReading
-        val confidencePercent = (projection.confidenceScore * 100).toInt()
-        val dailyRate = projection.dailyUsageRate
-        
-        val targetLabel = if (chargeDateSet) "Charge Date" else "Month End"
-        
-        val message = buildString {
-            appendLine("📊 Projection Breakdown ($source)\n")
-            
-            appendLine("📅 Target ($targetLabel):")
-            appendLine("   $monthName $targetDay\n")
-            
-            appendLine("📈 Projected Reading:")
-            appendLine("   $projectedInt m³\n")
-            
-            appendLine("📉 Calculation:")
-            appendLine("   Previous Reading: $previousReading m³")
-            appendLine("   Projected Usage: $projectedUsage m³")
-            appendLine("   Daily Rate: ${String.format(Locale.US, "%.2f", dailyRate)} m³/day\n")
-            
-            appendLine("🎯 Confidence: $confidencePercent%")
-            appendLine("   Quality: ${projection.getQualityDescription()}")
-            appendLine("   Data Points: ${projection.dataPointsUsed} scans")
-            
-            if (projection.rSquared > 0) {
-                appendLine("   R² (fit): ${String.format(Locale.US, "%.3f", projection.rSquared)}")
-            }
-            
-            appendLine("\n💡 Method: ${projection.source}")
-            
-            if (daysLeft > 0) {
-                appendLine("\n⏳ $daysLeft days until $targetLabel")
-            }
-        }
-        
+        startActivity(intent)
+    }
+
+    private fun shouldPromptNewSession(currentValue: Int, newValue: Int): Boolean {
+        if (currentValue < 0) return false
+
+        val movedBackward = newValue < currentValue
+        val increase = newValue - currentValue
+
+        return movedBackward || increase > MAX_REASONABLE_PREVIOUS_READING_STEP
+    }
+
+    private fun showNewSessionSuggestionDialog(newValue: Int) {
         AlertDialog.Builder(this)
-            .setTitle("How This Was Calculated")
-            .setMessage(message)
-            .setPositiveButton("Got it", null)
+            .setTitle("Large Previous Reading Change")
+            .setMessage(
+                "This change is far from your current baseline.\n\n" +
+                    "If this is a new meter/session, we can reset app tracking (history + projections) and start fresh from $newValue.\n\n" +
+                    "Your previous session can be viewed in Session Logs:\nSettings > History and Readings > Session Logs"
+            )
+            .setPositiveButton("Start New Session") { _, _ ->
+                SessionResetManager.resetForNewMeterSession(this, newValue)
+                loadData()
+                Toast.makeText(this, "New session started. Previous session archived to Session Logs", Toast.LENGTH_LONG).show()
+            }
+            .setNeutralButton("Just Save Value") { _, _ ->
+                applyPreviousReadingUpdate(newValue)
+            }
+            .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun applyPreviousReadingUpdate(newValue: Int) {
+        val chargeDate = com.kokeshi.metersnap.utils.ChargeDateHelper.getChargeDate(this)
+        val currentPeriodKey = com.kokeshi.metersnap.utils.ChargeDateHelper.getCurrentBillingPeriodKey(chargeDate)
+        prefs.edit()
+            .putInt(PREF_PREVIOUS_READING, newValue)
+            .putBoolean("previous_reading_set", true)
+            .putString(PREF_PREVIOUS_READING_PERIOD_KEY, currentPeriodKey)
+            .apply()
+        loadCwdPreviousReading()
+        loadProjections()
+        Toast.makeText(this, "Previous reading updated", Toast.LENGTH_SHORT).show()
     }
 }

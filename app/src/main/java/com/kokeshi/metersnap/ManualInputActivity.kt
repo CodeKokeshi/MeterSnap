@@ -20,10 +20,9 @@ import com.kokeshi.metersnap.notifications.EndOfMonthReminderScheduler
 import com.kokeshi.metersnap.utils.BillCalculator
 import com.kokeshi.metersnap.utils.RatePreferences
 import com.kokeshi.metersnap.utils.RateTableManager
-import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.BillCalculator.BillResult
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
-import java.util.UUID
+import com.kokeshi.metersnap.utils.SessionResetManager
 
 class ManualInputActivity : AppCompatActivity() {
 
@@ -34,6 +33,11 @@ class ManualInputActivity : AppCompatActivity() {
     private lateinit var ratePreferences: RatePreferences
     private lateinit var rateTableManager: RateTableManager
     private lateinit var projectedReadingManager: ProjectedReadingManager
+
+    companion object {
+        private const val PREFS_NAME = "MeterSnapPrefs"
+        private const val PREF_PREVIOUS_READING = "previous_reading"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -142,8 +146,73 @@ class ManualInputActivity : AppCompatActivity() {
             return
         }
 
-        // Get current rate settings
-        val rateType = ratePreferences.getRateType()
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val savedPreviousReading = prefs.getInt(PREF_PREVIOUS_READING, -1)
+        val hasSavedBaseline = savedPreviousReading >= 0
+
+        if (hasSavedBaseline && previousReading != savedPreviousReading) {
+            showPreviousReadingChangeOptions(
+                newPreviousReading = previousReading,
+                currentReading = currentReading,
+                rateType = ratePreferences.getRateType()
+            )
+            return
+        }
+
+        proceedWithCalculation(
+            currentReading = currentReading,
+            previousReading = previousReading,
+            rateType = ratePreferences.getRateType(),
+            calculatorMode = false
+        )
+    }
+
+    private fun showPreviousReadingChangeOptions(
+        newPreviousReading: Int,
+        currentReading: Int,
+        rateType: WaterRateType
+    ) {
+        AlertDialog.Builder(this)
+            .setTitle("Previous Reading Changed")
+            .setMessage(
+                "You entered a different Previous Reading.\n\n" +
+                    "Choose how to continue:\n" +
+                    "• Start new meter session: clears history + projections and uses this as your new baseline\n" +
+                    "• Temporary calculator mode: use this only for this calculation\n\n" +
+                    "You can view previous sessions in:\n" +
+                    "Settings > History and Readings > Session Logs"
+            )
+            .setPositiveButton("Start New Session") { _, _ ->
+                SessionResetManager.resetForNewMeterSession(this, newPreviousReading)
+                Toast.makeText(this, "New meter session started. Previous session archived to Session Logs", Toast.LENGTH_LONG).show()
+                proceedWithCalculation(
+                    currentReading = currentReading,
+                    previousReading = newPreviousReading,
+                    rateType = rateType,
+                    calculatorMode = false
+                )
+            }
+            .setNeutralButton("Temporary Calculator") { _, _ ->
+                Toast.makeText(this, "Temporary calculator mode. Session Logs remain available from Settings > History and Readings > Session Logs", Toast.LENGTH_LONG).show()
+                proceedWithCalculation(
+                    currentReading = currentReading,
+                    previousReading = newPreviousReading,
+                    rateType = rateType,
+                    calculatorMode = true
+                )
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun proceedWithCalculation(
+        currentReading: Int,
+        previousReading: Int,
+        rateType: WaterRateType,
+        calculatorMode: Boolean
+    ) {
+        val usage = currentReading - previousReading
+
         val customRates = ratePreferences.getCustomRates()
         
         // Calculate bill using dynamic method if not custom
@@ -185,10 +254,10 @@ class ManualInputActivity : AppCompatActivity() {
         
         if (appPredictedPreviousReading != null && appPredictedPreviousReading != previousReading) {
             // Auto-navigate to bill comparison (will save to history on exit)
-            navigateToBillComparison(currentReading, previousReading, rateType)
+            navigateToBillComparison(currentReading, previousReading, rateType, calculatorMode)
         } else {
             // Navigate to results screen (will save to history on exit)
-            navigateToBillResult(currentReading, previousReading, rateType, billResult)
+            navigateToBillResult(currentReading, previousReading, rateType, billResult, calculatorMode)
         }
     }
     
@@ -198,12 +267,14 @@ class ManualInputActivity : AppCompatActivity() {
     private fun navigateToBillComparison(
         currentReading: Int,
         previousReading: Int,
-        rateType: WaterRateType
+        rateType: WaterRateType,
+        calculatorMode: Boolean
     ) {
         val intent = Intent(this, BillComparisonActivity::class.java).apply {
             putExtra("CURRENT_READING", currentReading)
             putExtra("PREVIOUS_READING", previousReading)
             putExtra("RATE_TYPE", rateType.name)
+            putExtra("CALCULATOR_MODE", calculatorMode)
         }
         startActivity(intent)
     }
@@ -215,7 +286,8 @@ class ManualInputActivity : AppCompatActivity() {
         currentReading: Int,
         previousReading: Int,
         rateType: WaterRateType,
-        billResult: BillResult
+        billResult: BillResult,
+        calculatorMode: Boolean
     ) {
         val usage = currentReading - previousReading
         
@@ -238,6 +310,7 @@ class ManualInputActivity : AppCompatActivity() {
             putExtra("TIER_4_AMOUNT", billResult.tier4Amount)
             putExtra("TIER_5_USAGE", billResult.tier5Usage)
             putExtra("TIER_5_AMOUNT", billResult.tier5Amount)
+            putExtra("CALCULATOR_MODE", calculatorMode)
         }
         startActivity(intent)
     }

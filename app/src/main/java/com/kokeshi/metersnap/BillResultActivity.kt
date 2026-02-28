@@ -88,6 +88,7 @@ class BillResultActivity : AppCompatActivity() {
     
     // Flag to indicate if viewing from history
     private var isFromHistory: Boolean = false
+    private var isCalculatorMode: Boolean = false
     
     // Session tracking for history - prevents duplicates
     private var sessionId: String = UUID.randomUUID().toString()
@@ -117,7 +118,7 @@ class BillResultActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         // Auto-save to history when leaving (but only once, and not if from history)
-        if (!historySaved && !isFromHistory) {
+        if (!historySaved && !isFromHistory && !isCalculatorMode) {
             saveToHistory()
         }
     }
@@ -640,11 +641,15 @@ class BillResultActivity : AppCompatActivity() {
         esfFee = intent.getDoubleExtra("ESF_FEE", 0.0)
         totalBill = intent.getDoubleExtra("TOTAL_BILL", 0.0)
         isFromHistory = intent.getBooleanExtra("FROM_HISTORY", false)
+        isCalculatorMode = intent.getBooleanExtra("CALCULATOR_MODE", false)
         
         // Handle session ID for history tracking
         if (isFromHistory) {
             sessionId = intent.getStringExtra("HISTORY_ID") ?: sessionId
             historySaved = true // Already in history
+        } else if (isCalculatorMode) {
+            sessionId = UUID.randomUUID().toString()
+            historySaved = true // Explicitly avoid persistence in calculator mode
         } else {
             sessionId = UUID.randomUUID().toString()
             historySaved = false
@@ -668,7 +673,11 @@ class BillResultActivity : AppCompatActivity() {
         tier5Amount = intent.getDoubleExtra("TIER_5_AMOUNT", 0.0)
         
         // Update toolbar title based on source
-        supportActionBar?.title = if (isFromHistory) "Bill Details" else "Bill Calculation"
+        supportActionBar?.title = when {
+            isFromHistory -> "Bill Details"
+            isCalculatorMode -> "Bill Calculator"
+            else -> "Bill Calculation"
+        }
 
         // Display rate type name
         val textRateTypeName = findViewById<TextView>(R.id.text_rate_type_name)

@@ -13,9 +13,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 
 class TutorialOverlay @JvmOverloads constructor(
     context: Context,
@@ -24,7 +23,7 @@ class TutorialOverlay @JvmOverloads constructor(
 ) : FrameLayout(context, attrs, defStyleAttr) {
 
     private val dimPaint = Paint().apply {
-        color = 0xCC000000.toInt() // Semi-transparent black
+        color = 0xCC000000.toInt()
         style = Paint.Style.FILL
     }
 
@@ -36,22 +35,25 @@ class TutorialOverlay @JvmOverloads constructor(
     private var highlightRadius = 0f
 
     private val tutorialText: TextView
-    private val arrowImage: ImageView
     private var currentStep = 0
     private var onTutorialCompleted: (() -> Unit)? = null
 
     private val steps = listOf(
         TutorialStep(
-            text = "Tap the manual input button to enter your meter reading directly, without using the camera scanner.",
-            arrowDirection = ArrowDirection.DOWN_RIGHT
+            target = StepTarget.MANUAL_INPUT,
+            text = "Manual Input lets you type current and previous readings directly when camera scan is not needed."
         ),
         TutorialStep(
-            text = "Access settings to update your Previous Reading, configure water rates, and customize billing preferences.",
-            arrowDirection = ArrowDirection.DOWN_LEFT
+            target = StepTarget.LOAD_IMAGE,
+            text = "Load Image lets you pick a meter photo from your gallery for reading analysis."
         ),
         TutorialStep(
-            text = "Point your camera at the water meter. Hold steady when the confidence hits 100% to automatically calculate your bill.",
-            arrowDirection = ArrowDirection.UP
+            target = StepTarget.SETTINGS,
+            text = "Settings is where you manage previous reading, rates, history, and projections."
+        ),
+        TutorialStep(
+            target = StepTarget.CAMERA,
+            text = "Place your meter digits inside this guide box, keep it steady, and let MeterSnap read it."
         )
     )
 
@@ -59,64 +61,45 @@ class TutorialOverlay @JvmOverloads constructor(
         setWillNotDraw(false)
         isClickable = true
         isFocusable = true
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
 
-        // Tutorial text
         tutorialText = TextView(context).apply {
             layoutParams = LayoutParams(
                 LayoutParams.MATCH_PARENT,
                 LayoutParams.WRAP_CONTENT
             ).apply {
-                marginStart = 48
-                marginEnd = 48
+                marginStart = dp(24)
+                marginEnd = dp(24)
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
             }
-            textSize = 18f
+            textSize = 16f
             setTextColor(0xFFFFFFFF.toInt())
             textAlignment = TextView.TEXT_ALIGNMENT_CENTER
-            setPadding(32, 24, 32, 24)
-            background = ContextCompat.getDrawable(context, android.R.drawable.dialog_holo_dark_frame)
-            elevation = 8f
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = context.getDrawable(android.R.drawable.dialog_holo_dark_frame)
+            elevation = 12f
         }
         addView(tutorialText)
 
-        // Arrow indicator
-        arrowImage = ImageView(context).apply {
-            layoutParams = LayoutParams(120, 120)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            elevation = 8f
-        }
-        addView(arrowImage)
-
-        // Start with first step - intercept all touch events
         setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_UP) {
                 nextStep()
             }
-            true  // Always consume the event to prevent buttons from being clicked
+            true
         }
     }
 
     fun startTutorial(onCompleted: () -> Unit) {
-        this.onTutorialCompleted = onCompleted
+        onTutorialCompleted = onCompleted
         currentStep = 0
         alpha = 0f
         visibility = View.VISIBLE
-        
-        // Re-enable buttons before starting (in case they were disabled)
-        val parent = parent as? ViewGroup
-        parent?.findViewById<View>(R.id.btn_manual_input)?.apply {
-            isClickable = true
-            isFocusable = true
-        }
-        parent?.findViewById<View>(R.id.btn_settings)?.apply {
-            isClickable = true
-            isFocusable = true
-        }
-        
+
         animate()
             .alpha(1f)
-            .setDuration(300)
+            .setDuration(250)
             .start()
-        
+
         post { showStep(0) }
     }
 
@@ -129,126 +112,82 @@ class TutorialOverlay @JvmOverloads constructor(
         val tutorialStep = steps[step]
         tutorialText.text = tutorialStep.text
 
-        // Position text and arrow based on step
-        when (step) {
-            0 -> highlightManualInput()
-            1 -> highlightSettings()
-            2 -> highlightScanner()
+        when (tutorialStep.target) {
+            StepTarget.MANUAL_INPUT -> showButtonStep(R.id.btn_manual_input)
+            StepTarget.LOAD_IMAGE -> showButtonStep(R.id.btn_snap)
+            StepTarget.SETTINGS -> showButtonStep(R.id.btn_settings)
+            StepTarget.CAMERA -> showCameraStep()
         }
 
-        // Animate text appearance
         tutorialText.alpha = 0f
         tutorialText.animate()
             .alpha(1f)
-            .setDuration(300)
-            .start()
-
-        arrowImage.alpha = 0f
-        arrowImage.animate()
-            .alpha(1f)
-            .setDuration(300)
+            .setDuration(200)
             .start()
     }
 
-    private fun highlightManualInput() {
+    private fun showButtonStep(targetButtonId: Int) {
         val parent = parent as? ViewGroup ?: return
-        val button = parent.findViewById<View>(R.id.btn_manual_input) ?: return
-        
-        // Bring button to front so it's visible but disable it
-        button.bringToFront()
-        button.isClickable = false
-        button.isFocusable = false
-        
-        highlightView(button)
-        
-        // Position arrow pointing to the button
-        arrowImage.setImageResource(R.drawable.ic_arrow_down_right)
-        arrowImage.post {
-            val x = button.x - arrowImage.width - 20
-            val y = button.y - arrowImage.height - 40
-            arrowImage.x = x
-            arrowImage.y = y
-        }
 
-        // Position text above the highlighted area (higher)
+        val settingsGroup = getBottomBarGroup(parent, 0)
+        val loadGroup = getBottomBarGroup(parent, 1)
+        val manualGroup = getBottomBarGroup(parent, 2)
+
+        settingsGroup?.alpha = if (targetButtonId == R.id.btn_settings) 1f else 0.25f
+        loadGroup?.alpha = if (targetButtonId == R.id.btn_snap) 1f else 0.25f
+        manualGroup?.alpha = if (targetButtonId == R.id.btn_manual_input) 1f else 0.25f
+
+        parent.findViewById<View>(R.id.top_bar)?.alpha = 0.25f
+        parent.findViewById<View>(R.id.btn_torch)?.alpha = 0.25f
+        parent.findViewById<View>(R.id.guide_box)?.alpha = 0.35f
+        parent.findViewById<View>(R.id.scan_line)?.alpha = 0.25f
+        parent.findViewById<View>(R.id.tv_instructions)?.alpha = 0.35f
+
+        highlightRect = null
+        invalidate()
+
         tutorialText.post {
             val params = tutorialText.layoutParams as LayoutParams
-            params.topMargin = (button.y - tutorialText.height - 250).toInt()
+            params.gravity = android.view.Gravity.CENTER
+            params.topMargin = 0
             tutorialText.layoutParams = params
         }
     }
 
-    private fun highlightSettings() {
-        val parent = parent as? ViewGroup ?: return
-        val button = parent.findViewById<View>(R.id.btn_settings) ?: return
-        
-        // Bring button to front so it's visible but disable it
-        button.bringToFront()
-        button.isClickable = false
-        button.isFocusable = false
-        
-        highlightView(button)
-        
-        // Position arrow pointing to the button
-        arrowImage.setImageResource(R.drawable.ic_arrow_down_left)
-        arrowImage.post {
-            val x = button.x + button.width + 20
-            val y = button.y - arrowImage.height - 80
-            arrowImage.x = x
-            arrowImage.y = y
-        }
-
-        // Position text above the highlighted area (higher)
-        tutorialText.post {
-            val params = tutorialText.layoutParams as LayoutParams
-            params.topMargin = (button.y - tutorialText.height - 250).toInt()
-            tutorialText.layoutParams = params
-        }
-    }
-
-    private fun highlightScanner() {
+    private fun showCameraStep() {
         val parent = parent as? ViewGroup ?: return
         val guideBox = parent.findViewById<View>(R.id.guide_box) ?: return
-        val scanLine = parent.findViewById<View>(R.id.scan_line) ?: return
-        
-        // Bring guide box and scan line to front so they're visible
-        guideBox.bringToFront()
-        scanLine.bringToFront()
-        
-        highlightView(guideBox)
-        
-        // Position arrow pointing down to the guide box
-        arrowImage.setImageResource(R.drawable.ic_arrow_up)
-        arrowImage.post {
-            val x = guideBox.x + (guideBox.width - arrowImage.width) / 2
-            val y = guideBox.y - arrowImage.height - 40
-            arrowImage.x = x
-            arrowImage.y = y
-        }
 
-        // Position text above the arrow (higher)
+        getBottomBarGroup(parent, 0)?.alpha = 0.25f
+        getBottomBarGroup(parent, 1)?.alpha = 0.25f
+        getBottomBarGroup(parent, 2)?.alpha = 0.25f
+        parent.findViewById<View>(R.id.top_bar)?.alpha = 0.25f
+        parent.findViewById<View>(R.id.btn_torch)?.alpha = 0.25f
+        parent.findViewById<View>(R.id.scan_line)?.alpha = 1f
+        parent.findViewById<View>(R.id.tv_instructions)?.alpha = 0.25f
+
+        val padding = dp(8).toFloat()
+        highlightRect = RectF(
+            guideBox.x - padding,
+            guideBox.y - padding,
+            guideBox.x + guideBox.width + padding,
+            guideBox.y + guideBox.height + padding
+        )
+        highlightRadius = dp(12).toFloat()
+        invalidate()
+
         tutorialText.post {
             val params = tutorialText.layoutParams as LayoutParams
-            params.topMargin = (arrowImage.y - tutorialText.height - 40).toInt()
+            params.gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+            params.topMargin = (guideBox.y + guideBox.height + dp(14)).toInt()
             tutorialText.layoutParams = params
         }
     }
 
-    private fun highlightView(view: View) {
-        val location = IntArray(2)
-        view.getLocationInWindow(location)
-        
-        val padding = 40f
-        val verticalOffset = -80f  // Move highlight upward
-        highlightRect = RectF(
-            view.x - padding,
-            view.y - padding + verticalOffset,
-            view.x + view.width + padding,
-            view.y + view.height + padding + verticalOffset
-        )
-        highlightRadius = Math.max(view.width, view.height) / 2f + padding
-        
-        invalidate()
+    private fun getBottomBarGroup(parent: ViewGroup, index: Int): LinearLayout? {
+        val bottomBar = parent.findViewById<LinearLayout>(R.id.bottom_bar) ?: return null
+        if (index < 0 || index >= bottomBar.childCount) return null
+        return bottomBar.getChildAt(index) as? LinearLayout
     }
 
     private fun nextStep() {
@@ -261,31 +200,11 @@ class TutorialOverlay @JvmOverloads constructor(
     }
 
     private fun completeTutorial() {
-        // Re-enable buttons and reset their animations
-        val parent = parent as? ViewGroup
-        parent?.findViewById<View>(R.id.btn_manual_input)?.apply {
-            isClickable = true
-            isFocusable = true
-            animate().scaleX(1f).scaleY(1f).alpha(1f).rotation(0f).setDuration(200).start()
-        }
-        parent?.findViewById<View>(R.id.btn_settings)?.apply {
-            isClickable = true
-            isFocusable = true
-            animate().scaleX(1f).scaleY(1f).alpha(1f).rotation(0f).setDuration(200).start()
-        }
-        parent?.findViewById<View>(R.id.btn_snap)?.apply {
-            animate().scaleX(1f).scaleY(1f).alpha(1f).rotation(0f).setDuration(200).start()
-        }
-        parent?.findViewById<View>(R.id.btn_torch)?.apply {
-            animate().scaleX(1f).scaleY(1f).alpha(1f).rotation(0f).setDuration(200).start()
-        }
-        parent?.findViewById<View>(R.id.btn_help)?.apply {
-            animate().scaleX(1f).scaleY(1f).alpha(1f).rotation(0f).setDuration(200).start()
-        }
-        
+        restoreUiAlpha()
+
         animate()
             .alpha(0f)
-            .setDuration(300)
+            .setDuration(250)
             .setListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
                     visibility = View.GONE
@@ -295,24 +214,43 @@ class TutorialOverlay @JvmOverloads constructor(
             .start()
     }
 
+    private fun restoreUiAlpha() {
+        val parent = parent as? ViewGroup ?: return
+
+        getBottomBarGroup(parent, 0)?.alpha = 1f
+        getBottomBarGroup(parent, 1)?.alpha = 1f
+        getBottomBarGroup(parent, 2)?.alpha = 1f
+        parent.findViewById<View>(R.id.top_bar)?.alpha = 1f
+        parent.findViewById<View>(R.id.btn_torch)?.alpha = 1f
+        parent.findViewById<View>(R.id.guide_box)?.alpha = 1f
+        parent.findViewById<View>(R.id.scan_line)?.alpha = 1f
+        parent.findViewById<View>(R.id.tv_instructions)?.alpha = 1f
+
+        highlightRect = null
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        
-        // Draw dim overlay
+
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dimPaint)
-        
-        // Cut out highlighted area
+
         highlightRect?.let { rect ->
             canvas.drawRoundRect(rect, highlightRadius, highlightRadius, clearPaint)
         }
     }
 
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
     private data class TutorialStep(
-        val text: String,
-        val arrowDirection: ArrowDirection
+        val target: StepTarget,
+        val text: String
     )
 
-    private enum class ArrowDirection {
-        UP, DOWN_LEFT, DOWN_RIGHT
+    private enum class StepTarget {
+        MANUAL_INPUT,
+        LOAD_IMAGE,
+        SETTINGS,
+        CAMERA
     }
 }

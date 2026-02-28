@@ -96,6 +96,14 @@ class HistoryManager(context: Context) {
     fun clearAllHistory() {
         prefs.edit().remove(KEY_HISTORY).apply()
     }
+
+    fun hasAnyHistory(): Boolean {
+        return getAllHistory().isNotEmpty()
+    }
+
+    fun replaceAllHistory(entries: List<ScanHistoryEntry>) {
+        saveHistory(entries)
+    }
     
     /**
      * Clear history for a specific month

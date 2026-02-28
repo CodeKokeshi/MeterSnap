@@ -61,7 +61,7 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Input your current and previous water meter readings to calculate your estimated bill."
+                        android:text="Input your current reading and your receipt's Present Reading (used as Previous Reading baseline) to calculate your estimated bill."
                         android:textColor="?android:attr/textColorSecondary"
                         android:textSize="14sp" />
                 </LinearLayout>
@@ -110,7 +110,7 @@
                             android:id="@+id/edit_previous_reading"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:hint="Previous Reading"
+                            android:hint="Previous Reading (use receipt Present Reading)"
                             android:inputType="number"
                             android:textSize="18sp" />
                     </com.google.android.material.textfield.TextInputLayout>
