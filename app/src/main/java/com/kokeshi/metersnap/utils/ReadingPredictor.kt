@@ -297,17 +297,17 @@ class ReadingPredictor(context: Context) {
     
     /**
      * Get timestamp for start of billing period (00:00:00).
-     * When charge date is set: previous month's charge date - 1.
+     * When charge date is set: the day after the previous month's charge date.
      * Otherwise: first day of calendar month.
      */
     private fun getMonthStartTimestamp(year: Int, month: Int): Long {
         val calendar = Calendar.getInstance()
         if (chargeDateSet) {
-            // Billing period starts on (previous month's charge date - 1)
+            // Billing period starts on the day after the previous month's charge date.
             calendar.set(year, month - 1, 1) // set to this month first
             calendar.add(Calendar.MONTH, -1) // go to previous month
             calendar.set(Calendar.DAY_OF_MONTH, chargeDate.coerceAtMost(calendar.getActualMaximum(Calendar.DAY_OF_MONTH)))
-            calendar.add(Calendar.DAY_OF_MONTH, -1) // day before charge date
+            calendar.add(Calendar.DAY_OF_MONTH, 1) // day after previous charge date
         } else {
             calendar.set(year, month - 1, 1)
         }

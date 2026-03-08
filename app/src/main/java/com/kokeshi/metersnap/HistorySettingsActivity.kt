@@ -19,6 +19,7 @@ import com.google.android.material.textfield.TextInputEditText
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.utils.SessionResetManager
+import com.kokeshi.metersnap.utils.ChargeDateHelper
 import com.kokeshi.metersnap.data.ProjectedReading
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -146,21 +147,13 @@ class HistorySettingsActivity : AppCompatActivity() {
         val chargeDate = prefs.getInt("charge_date", -1)
         if (chargeDate > 0) {
             textChargeDate.text = "Day $chargeDate"
-            // Show coverage example
-            val cal = Calendar.getInstance()
-            val currentMonth = cal.get(Calendar.MONTH) // 0-based
-            val currentYear = cal.get(Calendar.YEAR)
-            val monthFormat = SimpleDateFormat("MMMM", Locale.getDefault())
-            
-            // Current billing period: previous month's (chargeDate+1) to this month's chargeDate
-            val endCal = Calendar.getInstance()
-            endCal.set(currentYear, currentMonth, chargeDate)
-            
-            val startCal = Calendar.getInstance()
-            startCal.set(currentYear, currentMonth, chargeDate)
-            startCal.add(Calendar.MONTH, -1)
-            startCal.add(Calendar.DAY_OF_MONTH, -1)
-            
+            val currentPeriodKey = ChargeDateHelper.getCurrentBillingPeriodKey(chargeDate)
+            val startCal = Calendar.getInstance().apply {
+                timeInMillis = ChargeDateHelper.getBillingPeriodStartTimestamp(currentPeriodKey, chargeDate)
+            }
+            val endCal = Calendar.getInstance().apply {
+                timeInMillis = ChargeDateHelper.getBillingPeriodEndTimestamp(currentPeriodKey, chargeDate)
+            }
             val startFormat = SimpleDateFormat("MMM d", Locale.getDefault())
             val endFormat = SimpleDateFormat("MMM d", Locale.getDefault())
             textChargeDateCoverage.text = "Current period: ${startFormat.format(startCal.time)} – ${endFormat.format(endCal.time)}"

@@ -5,7 +5,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="?android:attr/colorBackground">
+    android:background="@color/app_screen_background">
 
     <!-- Toolbar -->
     <androidx.appcompat.widget.Toolbar
@@ -13,7 +13,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:minHeight="?attr/actionBarSize"
-        android:background="?android:attr/colorBackground"
+        android:background="@color/app_screen_background"
         android:elevation="4dp"
         app:contentInsetStartWithNavigation="0dp"
         app:navigationIcon="?attr/homeAsUpIndicator"
@@ -36,10 +36,17 @@
             android:text="History and Readings"
             android:textSize="16sp"
             android:padding="16dp"
+            android:elevation="6dp"
+            android:stateListAnimator="@null"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            app:backgroundTint="@color/app_card_background"
             app:icon="@drawable/ic_history"
             app:iconGravity="start"
-            app:iconPadding="12dp"/>
+            app:iconPadding="12dp"
+            app:iconTint="?attr/colorPrimary"
+            app:rippleColor="?attr/colorControlHighlight"
+            app:strokeColor="@color/main_camera_button_stroke"
+            app:strokeWidth="1dp"/>
 
         <!-- Rate Configuration Button -->
         <com.google.android.material.button.MaterialButton
@@ -50,10 +57,17 @@
             android:text="Rate Configuration"
             android:textSize="16sp"
             android:padding="16dp"
+            android:elevation="6dp"
+            android:stateListAnimator="@null"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            app:backgroundTint="@color/app_card_background"
             app:icon="@drawable/ic_rates"
             app:iconGravity="start"
-            app:iconPadding="12dp"/>
+            app:iconPadding="12dp"
+            app:iconTint="?attr/colorPrimary"
+            app:rippleColor="?attr/colorControlHighlight"
+            app:strokeColor="@color/main_camera_button_stroke"
+            app:strokeWidth="1dp"/>
 
         <!-- Other Options Button -->
         <com.google.android.material.button.MaterialButton
@@ -64,10 +78,17 @@
             android:text="Other Options"
             android:textSize="16sp"
             android:padding="16dp"
+            android:elevation="6dp"
+            android:stateListAnimator="@null"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            app:backgroundTint="@color/app_card_background"
             app:icon="@drawable/ic_more_options"
             app:iconGravity="start"
-            app:iconPadding="12dp"/>
+            app:iconPadding="12dp"
+            app:iconTint="?attr/colorPrimary"
+            app:rippleColor="?attr/colorControlHighlight"
+            app:strokeColor="@color/main_camera_button_stroke"
+            app:strokeWidth="1dp"/>
 
     </LinearLayout>
 

@@ -58,6 +58,8 @@ class OtherOptionsActivity : AppCompatActivity() {
     private lateinit var switchLightMode: SwitchMaterial
 
     // Developer settings
+    private lateinit var switchDeveloperSettings: SwitchMaterial
+    private lateinit var containerDeveloperControls: LinearLayout
     private lateinit var switchDebugStrip: SwitchMaterial
     private lateinit var switchFakePrev: SwitchMaterial
     private lateinit var switchForceDualBilling: SwitchMaterial
@@ -74,6 +76,7 @@ class OtherOptionsActivity : AppCompatActivity() {
         private const val KEY_REMINDER_HOUR = "reminder_hour"
         private const val KEY_REMINDER_MINUTE = "reminder_minute"
         private const val DEV_PREFS_NAME = "developer_settings"
+        private const val KEY_DEVELOPER_SETTINGS_ENABLED = "developer_settings_master_enabled"
     }
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -116,6 +119,8 @@ class OtherOptionsActivity : AppCompatActivity() {
         switchLightMode = findViewById(R.id.switch_light_mode)
 
         // Developer settings
+        switchDeveloperSettings = findViewById(R.id.switch_developer_settings)
+        containerDeveloperControls = findViewById(R.id.container_developer_controls)
         switchDebugStrip = findViewById(R.id.switch_debug_strip)
         switchFakePrev = findViewById(R.id.switch_fake_prev)
         switchForceDualBilling = findViewById(R.id.switch_force_dual_billing)
@@ -176,9 +181,12 @@ class OtherOptionsActivity : AppCompatActivity() {
 
     private fun loadDeveloperSettings() {
         switchLightMode.isChecked = ThemePreferences.isLightModeEnabled(this)
+        val developerSettingsEnabled = devPrefs.getBoolean(KEY_DEVELOPER_SETTINGS_ENABLED, false)
+        switchDeveloperSettings.isChecked = developerSettingsEnabled
         switchDebugStrip.isChecked = devPrefs.getBoolean("debug_strip_enabled", false)
         switchFakePrev.isChecked = devPrefs.getBoolean("fake_prev_enabled", false)
         switchForceDualBilling.isChecked = DeveloperOptions.isForceDualBillingEnabled(this)
+        updateDeveloperSectionVisibility(developerSettingsEnabled)
     }
 
     private fun setupListeners() {
@@ -186,6 +194,11 @@ class OtherOptionsActivity : AppCompatActivity() {
             ThemePreferences.setLightModeEnabled(this, isChecked)
             val mode = if (isChecked) "Light mode" else "Dark mode"
             Toast.makeText(this, "$mode enabled", Toast.LENGTH_SHORT).show()
+        }
+
+        switchDeveloperSettings.setOnCheckedChangeListener { _, isChecked ->
+            devPrefs.edit().putBoolean(KEY_DEVELOPER_SETTINGS_ENABLED, isChecked).apply()
+            updateDeveloperSectionVisibility(isChecked)
         }
 
         switchReminders.setOnCheckedChangeListener { _, isChecked ->
@@ -251,6 +264,10 @@ class OtherOptionsActivity : AppCompatActivity() {
         btnGenerateReading.setOnClickListener {
             showGenerateReadingDialog()
         }
+    }
+
+    private fun updateDeveloperSectionVisibility(isEnabled: Boolean) {
+        containerDeveloperControls.visibility = if (isEnabled) View.VISIBLE else View.GONE
     }
 
     private fun enableReminders() {

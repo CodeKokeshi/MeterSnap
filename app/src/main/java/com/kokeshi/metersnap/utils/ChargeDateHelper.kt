@@ -10,7 +10,7 @@ import java.util.Locale
  *
  * CWD bills consumers on a specific day each month (1-28).
  * The billing period for a given month runs from:
- *   (previous month's charge date + 1) to (this month's charge date)
+ *   (the day after the previous month's charge date) to (this month's charge date)
  *
  * Example with charge date = 28:
  *   - "January 2026" covers Dec 29, 2025 – Jan 28, 2026
@@ -84,12 +84,12 @@ object ChargeDateHelper {
             endCal.time = date
             endCal.set(Calendar.DAY_OF_MONTH, chargeDate)
 
-            // Start date: previous month's charge date - 1
+            // Start date: the day after the previous month's charge date
             val startCal = Calendar.getInstance()
             startCal.time = date
             startCal.add(Calendar.MONTH, -1)
             startCal.set(Calendar.DAY_OF_MONTH, chargeDate)
-            startCal.add(Calendar.DAY_OF_MONTH, -1)
+            startCal.add(Calendar.DAY_OF_MONTH, 1)
 
             val startStr = shortFormat.format(startCal.time)
             val endStr = shortFormat.format(endCal.time)
@@ -134,7 +134,7 @@ object ChargeDateHelper {
     }
 
     /**
-     * Get the billing period start timestamp (previous charge date - 1 at 00:00:00).
+     * Get the billing period start timestamp (day after previous charge date at 00:00:00).
      */
     fun getBillingPeriodStartTimestamp(periodKey: String, chargeDate: Int): Long {
         val monthFormat = SimpleDateFormat("yyyy-MM", Locale.getDefault())
@@ -144,10 +144,11 @@ object ChargeDateHelper {
             cal.time = date
             cal.add(Calendar.MONTH, -1)
             cal.set(Calendar.DAY_OF_MONTH, chargeDate)
-            cal.add(Calendar.DAY_OF_MONTH, -1)
+            cal.add(Calendar.DAY_OF_MONTH, 1)
             cal.set(Calendar.HOUR_OF_DAY, 0)
             cal.set(Calendar.MINUTE, 0)
             cal.set(Calendar.SECOND, 0)
+            cal.set(Calendar.MILLISECOND, 0)
             cal.timeInMillis
         } catch (e: Exception) {
             0
