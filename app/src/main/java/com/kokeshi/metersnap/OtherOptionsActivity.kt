@@ -31,6 +31,7 @@ import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
 import com.kokeshi.metersnap.notifications.EndOfMonthReminderScheduler
 import com.kokeshi.metersnap.utils.BillCalculator
+import com.kokeshi.metersnap.utils.DeveloperOptions
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.utils.RatePreferences
@@ -57,6 +58,7 @@ class OtherOptionsActivity : AppCompatActivity() {
     // Developer settings
     private lateinit var switchDebugStrip: SwitchMaterial
     private lateinit var switchFakePrev: SwitchMaterial
+    private lateinit var switchForceDualBilling: SwitchMaterial
     private lateinit var btnGenerateReading: Button
 
     private lateinit var reminderPrefs: SharedPreferences
@@ -113,6 +115,7 @@ class OtherOptionsActivity : AppCompatActivity() {
         // Developer settings
         switchDebugStrip = findViewById(R.id.switch_debug_strip)
         switchFakePrev = findViewById(R.id.switch_fake_prev)
+        switchForceDualBilling = findViewById(R.id.switch_force_dual_billing)
         btnGenerateReading = findViewById(R.id.btn_generate_reading)
     }
 
@@ -171,6 +174,7 @@ class OtherOptionsActivity : AppCompatActivity() {
     private fun loadDeveloperSettings() {
         switchDebugStrip.isChecked = devPrefs.getBoolean("debug_strip_enabled", false)
         switchFakePrev.isChecked = devPrefs.getBoolean("fake_prev_enabled", false)
+        switchForceDualBilling.isChecked = DeveloperOptions.isForceDualBillingEnabled(this)
     }
 
     private fun setupListeners() {
@@ -206,6 +210,32 @@ class OtherOptionsActivity : AppCompatActivity() {
             devPrefs.edit().putBoolean("fake_prev_enabled", isChecked).apply()
             val status = if (isChecked) "enabled" else "disabled"
             Toast.makeText(this, "Fake Previous Month $status", Toast.LENGTH_SHORT).show()
+        }
+
+        switchForceDualBilling.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                AlertDialog.Builder(this)
+                    .setTitle("Enable Forced Dual Billing?")
+                    .setMessage(
+                        "Developer mode only.\n\n" +
+                            "When enabled, camera scans and Manual Input can open Dual Billing even without a real discrepancy. " +
+                            "The app will inject a synthetic comparison value for screenshots, and that forced discrepancy will not be saved to history."
+                    )
+                    .setPositiveButton("Enable") { _, _ ->
+                        DeveloperOptions.setForceDualBillingEnabled(this, true)
+                        Toast.makeText(this, "Forced Dual Billing enabled", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("Cancel") { _, _ ->
+                        switchForceDualBilling.isChecked = false
+                    }
+                    .setOnCancelListener {
+                        switchForceDualBilling.isChecked = false
+                    }
+                    .show()
+            } else {
+                DeveloperOptions.setForceDualBillingEnabled(this, false)
+                Toast.makeText(this, "Forced Dual Billing disabled", Toast.LENGTH_SHORT).show()
+            }
         }
 
         btnGenerateReading.setOnClickListener {

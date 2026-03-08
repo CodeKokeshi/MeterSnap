@@ -21,6 +21,7 @@ import com.kokeshi.metersnap.utils.BillCalculator
 import com.kokeshi.metersnap.utils.RatePreferences
 import com.kokeshi.metersnap.utils.RateTableManager
 import com.kokeshi.metersnap.utils.BillCalculator.BillResult
+import com.kokeshi.metersnap.utils.DeveloperOptions
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.utils.SessionResetManager
 
@@ -249,13 +250,39 @@ class ManualInputActivity : AppCompatActivity() {
         // DON'T save to history here - let the destination activity handle it
         // This prevents duplicate entries
 
-        // Check if we have a predicted previous reading available
+        val isForcedDualBillingEnabled = DeveloperOptions.isForceDualBillingEnabled(this)
         val appPredictedPreviousReading = projectedReadingManager.getAppPredictedPreviousReading()
-        
-        if (appPredictedPreviousReading != null && appPredictedPreviousReading != previousReading) {
-            // Auto-navigate to bill comparison (will save to history on exit)
-            navigateToBillComparison(currentReading, previousReading, rateType, calculatorMode)
+        val comparisonPreviousReading = if (isForcedDualBillingEnabled) {
+            DeveloperOptions.buildForcedAppPreviousReading(currentReading, previousReading)
+                ?: appPredictedPreviousReading?.takeIf { it != previousReading }
         } else {
+            appPredictedPreviousReading?.takeIf { it != previousReading }
+        }
+
+        if (comparisonPreviousReading != null) {
+            if (isForcedDualBillingEnabled) {
+                Toast.makeText(
+                    this,
+                    "Developer preview: forced dual billing will not be saved to history",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            navigateToBillComparison(
+                currentReading = currentReading,
+                previousReading = previousReading,
+                rateType = rateType,
+                calculatorMode = calculatorMode,
+                devForcedComparison = isForcedDualBillingEnabled,
+                comparisonPreviousReading = comparisonPreviousReading
+            )
+        } else {
+            if (isForcedDualBillingEnabled) {
+                Toast.makeText(
+                    this,
+                    "Developer preview could not create a valid discrepancy for these readings",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
             // Navigate to results screen (will save to history on exit)
             navigateToBillResult(currentReading, previousReading, rateType, billResult, calculatorMode)
         }
@@ -268,13 +295,17 @@ class ManualInputActivity : AppCompatActivity() {
         currentReading: Int,
         previousReading: Int,
         rateType: WaterRateType,
-        calculatorMode: Boolean
+        calculatorMode: Boolean,
+        devForcedComparison: Boolean,
+        comparisonPreviousReading: Int
     ) {
         val intent = Intent(this, BillComparisonActivity::class.java).apply {
             putExtra("CURRENT_READING", currentReading)
             putExtra("PREVIOUS_READING", previousReading)
             putExtra("RATE_TYPE", rateType.name)
             putExtra("CALCULATOR_MODE", calculatorMode)
+            putExtra(DeveloperOptions.EXTRA_DEV_FORCED_COMPARISON, devForcedComparison)
+            putExtra(DeveloperOptions.EXTRA_FORCED_APP_PREVIOUS_READING, comparisonPreviousReading)
         }
         startActivity(intent)
     }

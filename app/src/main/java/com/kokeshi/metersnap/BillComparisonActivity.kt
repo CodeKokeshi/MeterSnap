@@ -48,6 +48,7 @@ import com.kokeshi.metersnap.data.ScanHistoryEntry
 import com.kokeshi.metersnap.data.TierBreakdownDisplay
 import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.utils.BillCalculator
+import com.kokeshi.metersnap.utils.DeveloperOptions
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.utils.RatePreferences
@@ -85,6 +86,7 @@ class BillComparisonActivity : AppCompatActivity() {
     private var rateType: String = "RESIDENTIAL"
     private var isFromHistory: Boolean = false
     private var isCalculatorMode: Boolean = false
+    private var isDevForcedComparison: Boolean = false
     
     // Session tracking - prevents duplicates
     private var sessionId: String = UUID.randomUUID().toString()
@@ -113,12 +115,20 @@ class BillComparisonActivity : AppCompatActivity() {
         calculateDualBills()
         setupViewPager()
         setupButtons()
+
+        if (isDevForcedComparison) {
+            Toast.makeText(
+                this,
+                "Developer preview only. Forced discrepancy is not saved to history.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
     
     override fun onPause() {
         super.onPause()
         // Auto-save to history when leaving the activity (but only once)
-        if (!historySaved && !isFromHistory && !isCalculatorMode) {
+        if (!historySaved && !isFromHistory && !isCalculatorMode && !isDevForcedComparison) {
             saveBothBillsToHistory()
         }
     }
@@ -221,6 +231,7 @@ class BillComparisonActivity : AppCompatActivity() {
         rateType = intent.getStringExtra("RATE_TYPE") ?: "RESIDENTIAL"
         isFromHistory = intent.getBooleanExtra("FROM_HISTORY", false)
         isCalculatorMode = intent.getBooleanExtra("CALCULATOR_MODE", false)
+        isDevForcedComparison = intent.getBooleanExtra(DeveloperOptions.EXTRA_DEV_FORCED_COMPARISON, false)
         
         if (isFromHistory) {
             // Use the existing history entry ID if provided
@@ -235,6 +246,14 @@ class BillComparisonActivity : AppCompatActivity() {
             } else {
                 null
             }
+        } else if (isDevForcedComparison) {
+            sessionId = UUID.randomUUID().toString()
+            historySaved = true
+
+            appPredictedPreviousReading = intent
+                .getIntExtra(DeveloperOptions.EXTRA_FORCED_APP_PREVIOUS_READING, -1)
+                .takeIf { it >= 0 && it != cwdPreviousReading }
+                ?: projectedReadingManager.getAppPredictedPreviousReading()?.takeIf { it != cwdPreviousReading }
         } else if (isCalculatorMode) {
             sessionId = UUID.randomUUID().toString()
             historySaved = true // Temporary calculator flow - do not persist
@@ -250,7 +269,7 @@ class BillComparisonActivity : AppCompatActivity() {
             appPredictedPreviousReading = projectedReadingManager.getAppPredictedPreviousReading()
         }
         
-        Log.d(TAG, "Loaded: current=$currentReading, cwdPrev=$cwdPreviousReading, appPrev=$appPredictedPreviousReading, fromHistory=$isFromHistory, calculatorMode=$isCalculatorMode, sessionId=$sessionId")
+        Log.d(TAG, "Loaded: current=$currentReading, cwdPrev=$cwdPreviousReading, appPrev=$appPredictedPreviousReading, fromHistory=$isFromHistory, calculatorMode=$isCalculatorMode, devForced=$isDevForcedComparison, sessionId=$sessionId")
     }
 
     private fun calculateDualBills() {

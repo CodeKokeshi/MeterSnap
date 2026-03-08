@@ -28,6 +28,7 @@ import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
 import com.kokeshi.metersnap.data.ScanHistoryEntry
 import com.kokeshi.metersnap.utils.BillCalculator
+import com.kokeshi.metersnap.utils.DeveloperOptions
 import com.kokeshi.metersnap.utils.RatePreferences
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.BillCalculator.BillResult
@@ -921,18 +922,42 @@ class MainActivity : AppCompatActivity() {
         
         // DON'T save to history here - let destination activity handle it to prevent duplicates
         
-        // Check if we have a predicted previous reading available
+        val isForcedDualBillingEnabled = DeveloperOptions.isForceDualBillingEnabled(this)
         val appPredictedPreviousReading = projectedReadingManager.getAppPredictedPreviousReading()
-        
-        if (appPredictedPreviousReading != null && appPredictedPreviousReading != previousReading) {
-            // Navigate to BillComparisonActivity (will save to history on exit)
+        val comparisonPreviousReading = if (isForcedDualBillingEnabled) {
+            DeveloperOptions.buildForcedAppPreviousReading(currentReading, previousReading)
+                ?: appPredictedPreviousReading?.takeIf { it != previousReading }
+        } else {
+            appPredictedPreviousReading?.takeIf { it != previousReading }
+        }
+
+        if (comparisonPreviousReading != null) {
+            if (isForcedDualBillingEnabled) {
+                Toast.makeText(
+                    this,
+                    "Developer preview: forced dual billing will not be saved to history",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+
+            // Navigate to BillComparisonActivity (will save to history on exit unless dev preview is forced)
             val intent = android.content.Intent(this, BillComparisonActivity::class.java).apply {
                 putExtra("CURRENT_READING", currentReading)
                 putExtra("PREVIOUS_READING", previousReading)
                 putExtra("RATE_TYPE", rateType.name)
+                putExtra(DeveloperOptions.EXTRA_DEV_FORCED_COMPARISON, isForcedDualBillingEnabled)
+                putExtra(DeveloperOptions.EXTRA_FORCED_APP_PREVIOUS_READING, comparisonPreviousReading)
             }
             startActivity(intent)
         } else {
+            if (isForcedDualBillingEnabled) {
+                Toast.makeText(
+                    this,
+                    "Developer preview could not create a valid discrepancy for this reading",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+
             // Launch BillResultActivity (will save to history on exit)
             val intent = android.content.Intent(this, BillResultActivity::class.java).apply {
                 putExtra("USAGE", usage)
