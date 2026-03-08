@@ -31,7 +31,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="12dp">
 
             <!-- Charge Date Section -->
             <androidx.cardview.widget.CardView
@@ -44,7 +44,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="16dp">
+                    android:padding="12dp">
 
                     <TextView
                         android:layout_width="match_parent"
@@ -75,7 +75,7 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:text="Not Set"
-                            android:textSize="28sp"
+                            android:textSize="22sp"
                             android:textStyle="bold"
                             android:textColor="?attr/colorPrimary" />
 
@@ -83,7 +83,9 @@
                             android:id="@+id/btn_edit_charge_date"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
+                                android:minHeight="40dp"
                             android:text="Edit"
+                                android:textSize="13sp"
                             style="@style/Widget.MaterialComponents.Button.TextButton"/>
                     </LinearLayout>
 
@@ -102,7 +104,7 @@
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="12dp"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="2dp">
 
@@ -110,7 +112,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="12dp">
 
                 <TextView
                     android:layout_width="match_parent"
@@ -141,7 +143,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="Not Set"
-                        android:textSize="28sp"
+                        android:textSize="22sp"
                         android:textStyle="bold"
                         android:textColor="@android:color/holo_blue_dark" />
 
@@ -149,7 +151,9 @@
                         android:id="@+id/btn_edit_cwd_previous"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:minHeight="40dp"
                         android:text="Edit"
+                        android:textSize="13sp"
                         style="@style/Widget.MaterialComponents.Button.TextButton"/>
                 </LinearLayout>
             </LinearLayout>
@@ -159,7 +163,7 @@
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="12dp"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="2dp">
 
@@ -167,7 +171,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="12dp">
 
                 <TextView
                     android:layout_width="match_parent"
@@ -190,10 +194,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="No data"
-                    android:textSize="28sp"
+                    android:textSize="22sp"
                     android:textStyle="bold"
                     android:textColor="@android:color/holo_orange_dark"
-                    android:layout_marginTop="8dp"/>
+                    android:layout_marginTop="6dp"/>
                     
                 <TextView
                     android:id="@+id/text_app_previous_details"
@@ -210,7 +214,7 @@
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="12dp"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="2dp">
 
@@ -218,7 +222,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="12dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -227,8 +231,8 @@
                     android:gravity="center_vertical">
 
                     <View
-                        android:layout_width="8dp"
-                        android:layout_height="8dp"
+                        android:layout_width="6dp"
+                        android:layout_height="6dp"
                         android:background="@android:color/holo_blue_dark"/>
 
                     <TextView
@@ -236,9 +240,9 @@
                         android:layout_height="wrap_content"
                         android:text="Projected Month-End (CWD)"
                         android:textColor="?android:attr/textColorPrimary"
-                        android:textSize="16sp"
+                        android:textSize="15sp"
                         android:textStyle="bold"
-                        android:layout_marginStart="8dp"/>
+                        android:layout_marginStart="6dp"/>
                 </LinearLayout>
 
                 <TextView
@@ -254,10 +258,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Not enough data"
-                    android:textSize="28sp"
+                    android:textSize="22sp"
                     android:textStyle="bold"
                     android:textColor="@android:color/holo_blue_dark"
-                    android:layout_marginTop="8dp"/>
+                    android:layout_marginTop="6dp"/>
                     
                 <TextView
                     android:id="@+id/text_projected_cwd_details"
@@ -274,7 +278,7 @@
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="12dp"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="2dp">
 
@@ -282,7 +286,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="12dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -291,8 +295,8 @@
                     android:gravity="center_vertical">
 
                     <View
-                        android:layout_width="8dp"
-                        android:layout_height="8dp"
+                        android:layout_width="6dp"
+                        android:layout_height="6dp"
                         android:background="@android:color/holo_green_dark"/>
 
                     <TextView
@@ -300,9 +304,9 @@
                         android:layout_height="wrap_content"
                         android:text="Projected Month-End (App)"
                         android:textColor="?android:attr/textColorPrimary"
-                        android:textSize="16sp"
+                        android:textSize="15sp"
                         android:textStyle="bold"
-                        android:layout_marginStart="8dp"/>
+                        android:layout_marginStart="6dp"/>
                 </LinearLayout>
 
                 <TextView
@@ -318,10 +322,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Not enough data"
-                    android:textSize="28sp"
+                    android:textSize="22sp"
                     android:textStyle="bold"
                     android:textColor="@android:color/holo_green_dark"
-                    android:layout_marginTop="8dp"/>
+                    android:layout_marginTop="6dp"/>
                     
                 <TextView
                     android:id="@+id/text_projected_app_details"
@@ -334,29 +338,42 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-            <!-- History Logs Button -->
-            <Button
-                android:id="@+id/btn_history_logs"
+            <!-- Log Buttons -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:text="View History Logs"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
+                android:layout_marginTop="12dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-            <Button
-                android:id="@+id/btn_session_logs"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="View Session Logs"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
+                <Button
+                    android:id="@+id/btn_history_logs"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:minHeight="44dp"
+                    android:text="History Logs"
+                    android:textSize="13sp"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
+
+                <Button
+                    android:id="@+id/btn_session_logs"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:minHeight="44dp"
+                    android:text="Session Logs"
+                    android:textSize="13sp"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
+            </LinearLayout>
 
             <!-- Prediction Stats Card -->
             <androidx.cardview.widget.CardView
                 android:id="@+id/card_prediction_stats"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="12dp"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="2dp"
                 android:visibility="gone">
@@ -365,14 +382,14 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="12dp">
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Prediction Performance"
                     android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="14sp"
+                    android:textSize="13sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -380,9 +397,9 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="No prediction data yet"
-                    android:textSize="12sp"
+                    android:textSize="11sp"
                     android:textColor="?android:attr/textColorSecondary"
-                    android:layout_marginTop="8dp"/>
+                    android:layout_marginTop="6dp"/>
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
