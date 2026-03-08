@@ -4,7 +4,7 @@
     <solid android:color="#00000000" />
     <stroke
         android:width="2dp"
-        android:color="#FFFFFF" />
+        android:color="@color/main_camera_guide_border" />
     <corners android:radius="8dp" />
 </shape>
 

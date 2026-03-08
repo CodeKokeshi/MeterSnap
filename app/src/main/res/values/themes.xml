@@ -11,6 +11,8 @@
         <item name="colorOnSecondaryContainer">@color/ms_blue_on_secondary_container</item>
         <item name="colorTertiary">@color/ms_blue_tertiary</item>
         <item name="colorOnTertiary">@color/ms_blue_on_tertiary</item>
+        <item name="android:colorBackground">@color/app_screen_background</item>
+        <item name="cardViewStyle">@style/Widget.MeterSnap.CardView</item>
 
         <!-- Edge-to-edge: Make system bars transparent/translucent -->
         <item name="android:statusBarColor">@android:color/transparent</item>
@@ -19,6 +21,10 @@
         <!-- Light status bar icons when in light mode -->
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="Widget.MeterSnap.CardView" parent="CardView">
+        <item name="cardBackgroundColor">@color/app_card_background</item>
     </style>
 
     <style name="Theme.MeterSnap" parent="Base.Theme.MeterSnap" />

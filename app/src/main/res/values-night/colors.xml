@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="app_screen_background">#FF131313</color>
+    <color name="app_card_background">#FF202020</color>
+    <color name="main_camera_root_background">#FF000000</color>
+    <color name="main_camera_preview_fallback">#FF000000</color>
+    <color name="main_camera_chrome_background">#D9000000</color>
+    <color name="main_camera_chrome_content">#FFFFFFFF</color>
+    <color name="main_camera_button_background">#FF2A2A2A</color>
+    <color name="main_camera_button_stroke">#FF444444</color>
+    <color name="main_camera_guide_border">#FFFFFFFF</color>
+    <color name="main_camera_instruction_default">#FFFFFFFF</color>
+    <color name="main_camera_live_result">#FF6DFF81</color>
+    <color name="appearance_card_tint">#FF1E1E1E</color>
+    <color name="appearance_card_accent">#FF90CAF9</color>
+    <color name="prediction_stats_card_background">#FF123C25</color>
+    <color name="prediction_stats_card_text">#FF90EE90</color>
+</resources>

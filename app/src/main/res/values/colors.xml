@@ -12,4 +12,19 @@
     <color name="ms_blue_on_secondary_container">#001D36</color>
     <color name="ms_blue_tertiary">#1E88E5</color>
     <color name="ms_blue_on_tertiary">#FFFFFFFF</color>
+    <color name="app_screen_background">#FFEDF1F6</color>
+    <color name="app_card_background">#FFFFFFFF</color>
+    <color name="main_camera_root_background">#FFF4F7FB</color>
+    <color name="main_camera_preview_fallback">#FFE5EBF3</color>
+    <color name="main_camera_chrome_background">#E6FFFFFF</color>
+    <color name="main_camera_chrome_content">#FF102236</color>
+    <color name="main_camera_button_background">#FFFFFFFF</color>
+    <color name="main_camera_button_stroke">#FFD0D9E6</color>
+    <color name="main_camera_guide_border">#FFF8FBFF</color>
+    <color name="main_camera_instruction_default">#FFFFFFFF</color>
+    <color name="main_camera_live_result">#FF0B8F3A</color>
+    <color name="appearance_card_tint">#FFF2F7FF</color>
+    <color name="appearance_card_accent">#FF1565C0</color>
+    <color name="prediction_stats_card_background">#FFE8F5E9</color>
+    <color name="prediction_stats_card_text">#FF1E5F38</color>
 </resources>

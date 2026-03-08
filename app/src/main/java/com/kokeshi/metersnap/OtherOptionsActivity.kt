@@ -35,6 +35,7 @@ import com.kokeshi.metersnap.utils.DeveloperOptions
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.utils.RatePreferences
+import com.kokeshi.metersnap.utils.ThemePreferences
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -54,6 +55,7 @@ class OtherOptionsActivity : AppCompatActivity() {
     private lateinit var textReminderTime: TextView
     private lateinit var cardPredictionStats: CardView
     private lateinit var textPredictionStats: TextView
+    private lateinit var switchLightMode: SwitchMaterial
 
     // Developer settings
     private lateinit var switchDebugStrip: SwitchMaterial
@@ -111,6 +113,7 @@ class OtherOptionsActivity : AppCompatActivity() {
         textReminderTime = findViewById(R.id.text_reminder_time)
         cardPredictionStats = findViewById(R.id.card_prediction_stats)
         textPredictionStats = findViewById(R.id.text_prediction_stats)
+        switchLightMode = findViewById(R.id.switch_light_mode)
 
         // Developer settings
         switchDebugStrip = findViewById(R.id.switch_debug_strip)
@@ -172,12 +175,19 @@ class OtherOptionsActivity : AppCompatActivity() {
     }
 
     private fun loadDeveloperSettings() {
+        switchLightMode.isChecked = ThemePreferences.isLightModeEnabled(this)
         switchDebugStrip.isChecked = devPrefs.getBoolean("debug_strip_enabled", false)
         switchFakePrev.isChecked = devPrefs.getBoolean("fake_prev_enabled", false)
         switchForceDualBilling.isChecked = DeveloperOptions.isForceDualBillingEnabled(this)
     }
 
     private fun setupListeners() {
+        switchLightMode.setOnCheckedChangeListener { _, isChecked ->
+            ThemePreferences.setLightModeEnabled(this, isChecked)
+            val mode = if (isChecked) "Light mode" else "Dark mode"
+            Toast.makeText(this, "$mode enabled", Toast.LENGTH_SHORT).show()
+        }
+
         switchReminders.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

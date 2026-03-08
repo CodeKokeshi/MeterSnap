@@ -206,7 +206,7 @@ class MainActivity : AppCompatActivity() {
         // Reset UI instructions
         val tvInstructions = findViewById<android.widget.TextView>(R.id.tv_instructions)
         tvInstructions?.text = "Align meter in box"
-        tvInstructions?.setTextColor(android.graphics.Color.WHITE)
+        tvInstructions?.setTextColor(ContextCompat.getColor(this, R.color.main_camera_instruction_default))
         
         android.util.Log.d("MainActivity", "onResume: Reset state, previous reading = $currentPreviousReading")
         
@@ -415,7 +415,7 @@ class MainActivity : AppCompatActivity() {
                             } else {
                                 stableFrames = 0
                                 tvInstructions.text = "Align meter in box"
-                                tvInstructions.setTextColor(android.graphics.Color.WHITE)
+                                tvInstructions.setTextColor(ContextCompat.getColor(this, R.color.main_camera_instruction_default))
                             }
                         }
                     }
