@@ -3,6 +3,10 @@ package com.kokeshi.metersnap
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect as AndroidRect
 import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Environment
@@ -10,27 +14,24 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
-import androidx.core.graphics.createBitmap
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.kokeshi.metersnap.utils.HistoryManager
+import com.kokeshi.metersnap.utils.ReadingValidator
 import org.opencv.android.Utils
-import org.opencv.core.Core
 import org.opencv.core.Mat
-import org.opencv.core.MatOfPoint
-import org.opencv.core.MatOfRect
 import org.opencv.core.Rect
-import org.opencv.core.Scalar
 import org.opencv.core.Size
-import org.opencv.core.CvType
 import org.opencv.imgproc.Imgproc
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import com.google.android.gms.tasks.Tasks
-import com.kokeshi.metersnap.utils.ReadingValidator
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Result from the MeterAnalyzer containing detection info and validation status.
@@ -42,1441 +43,307 @@ data class AnalyzerResult(
     val acceptedRects: List<Rect>,
     val imageWidth: Int,
     val imageHeight: Int,
-    val source: String,  // "L" = LeNet, "M" = MLKit, "H" = Hybrid, "V" = Voted
+    val source: String,
+    val hasFreshEvidence: Boolean,
     val validationResult: ReadingValidator.ValidationResult?,
+    val mlKitDisplayText: String,
+    val paddleDisplayText: String,
+    val ocrDebug: String,
     val shouldSuggestManualInput: Boolean = false
+)
+
+private data class OcrCandidate(
+    val reading: String,
+    val confidence: Float,
+    val slotRects: List<Rect>,
+    val source: String
+)
+
+private data class DigitToken(
+    val digit: Char,
+    val rect: Rect,
+    val source: String,
+    val weight: Float
+)
+
+private data class OcrEngineResult(
+    val candidate: OcrCandidate?,
+    val rawText: String,
+    val digits: String,
+    val pass: String,
+    val tokens: List<DigitToken> = emptyList()
+)
+
+private data class MlKitVariant(
+    val bitmap: Bitmap,
+    val tag: String
 )
 
 class MeterAnalyzer(
     private val context: Context,
-    private val classifier: DigitClassifier,
     private var previousReading: Int = 0,
     private val onResult: (AnalyzerResult) -> Unit
 ) : ImageAnalysis.Analyzer {
 
+    private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    private val historyManager = HistoryManager(context)
+    private val failureTracker = ReadingValidator.FailureTracker()
+    private val readingPredictor = ReadingValidator.ReadingPredictor()
+
+    private val readingHistory = ArrayDeque<String>()
     private var lastAnalyzedTimestamp = 0L
-    private val interval = 50L // Super fast (20fps) for snappier feel
+    private val intervalMs = 110L
+    private var lastCutoffRecoveryMs = 0L
+    private val cutoffRecoveryCooldownMs = 260L
+    @Volatile
+    private var guideBoxLeftN = 0.13f
+    @Volatile
+    private var guideBoxTopN = 0.31f
+    @Volatile
+    private var guideBoxRightN = 0.87f
+    @Volatile
+    private var guideBoxBottomN = 0.49f
+    private var lastLowerLimit = 0
+    private var lastUpperLimit = ReadingValidator.MAX_READING_VALUE
+    private var lastPredictiveReading = "-"
+
     private val dateFormatter = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
-    private var debugCounter = 0
     private val debugFolderName = "MeterSnapDigits"
     private val debugRelativePath = "Pictures/$debugFolderName"
+    var captureDebugNextFrame = false
 
-    // Voting Buffer
-    private val resultHistory = ArrayDeque<String>()
-    private val historySize = 5 // Reduced from 10 for faster consensus
-    private var consecutiveFailures = 0 // Track consecutive failures for ML Kit trigger
-    
-    // ML Kit Fallback
-    private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-    private val mlKitExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
-    private var mlKitInProgress = false
-    private var cachedMLKitResult = ""
-    private var cachedMLKitRects = ArrayList<Rect>()
-    private var cachedMLKitTimestamp = 0L  // When MLKit last detected something
-    private val MLKIT_CACHE_EXPIRY_MS = 500L  // MLKit result expires after 500ms
-    private var firstGlimpseTime = 0L
-    
-    // MSER Instance (Reused to avoid memory leaks)
-    private val mser = org.opencv.features2d.MSER.create(
-        4,      // delta: Reduced to 4 to catch lower contrast red digits
-        60,     // min_area
-        14400,  // max_area
-        0.5,    // max_variation: Increased to 0.5 to allow more variation (rolling digits)
-        0.2,    // min_diversity
-        200,    // max_evolution
-        1.01,   // area_threshold
-        0.003,  // min_margin
-        5       // edge_blur_size
-    )
-    
-    // === DECISION ALGORITHM STATE ===
-    // Failure tracker for suggesting manual input
-    private val failureTracker = ReadingValidator.FailureTracker()
-    
-    // === PREDICTION ENGINE ===
-    // Intelligent predictor that accumulates observations and predicts reading
-    private val readingPredictor = ReadingValidator.ReadingPredictor()
-    
-    // Cached LeNet result for voting
-    private var cachedLenetResult = ""
-    
-    // Cached Hybrid result (MLKit localization + LeNet classification)
-    private var cachedHybridResult = ""
-    
-    // === SMART CONFIDENCE SYSTEM ===
-    // The "locked in" reading we're confident about (normalized)
-    private var lockedReading = ""
-    
-    // How many consecutive frames we've seen the locked reading
-    private var lockedFrameCount = 0
-    
-    // The current confidence level (0-100) - with momentum
-    private var currentConfidence = 0f
-    
-    // Timestamp when we LAST saw the locked reading (for timeout)
-    private var lastSeenLockedTime = 0L
-    
-    // How many frames since we last saw ANY valid reading
-    private var framesSinceValidReading = 0
-    
-    // Confidence thresholds
-    companion object {
-        // Once we hit this confidence, we "lock in" and resist changes
-        const val LOCK_IN_THRESHOLD = 80f
-        
-        // Minimum frames needed before we consider locking
-        const val MIN_FRAMES_TO_LOCK = 3
-        
-        // How fast confidence grows per consistent frame (additive)
-        const val CONFIDENCE_GROWTH_PER_FRAME = 15f  // Faster growth!
-        
-        // How fast confidence decays when we see different readings (multiplicative)
-        const val CONFIDENCE_DECAY_FACTOR = 0.5f  // Faster decay!
-        
-        // How fast confidence decays when we see NOTHING
-        const val NO_DETECTION_DECAY = 0.4f  // Very fast decay when nothing detected!
-        
-        // Minimum confidence floor when locked (doesn't drop below this easily)
-        const val LOCKED_CONFIDENCE_FLOOR = 50f
-        
-        // Maximum time (ms) to hold a lock WITHOUT seeing the reading
-        const val MAX_LOCK_HOLD_TIME = 500L  // Very short! Release fast
-        
-        // Frames of nothing before we completely release the lock
-        const val FRAMES_TO_RELEASE_LOCK = 4
+    init {
+        val seeded = mutableListOf<String>()
+        if (previousReading > 0) seeded.add(String.format("%05d", previousReading))
+        val latestHistory = historyManager.getAllHistory().firstOrNull()?.currentReading
+        if (latestHistory != null) seeded.add(String.format("%05d", latestHistory))
+        seeded.distinct().forEach {
+            readingHistory.addLast(it)
+            readingPredictor.recordObservation(it)
+        }
     }
 
-    var captureDebugNextFrame = false
-    
-    /**
-     * Update the previous reading used for validation.
-     * Call this when the user confirms a reading or updates settings.
-     */
     fun setPreviousReading(reading: Int) {
-        // If the previous reading CHANGED, reset all detection state!
-        // This prevents old locked readings from being validated against new previous value
-        if (reading != previousReading) {
-            Log.d("MeterAnalyzer", "Previous reading CHANGED: $previousReading -> $reading, RESETTING state!")
-            reset()
-        }
+        if (reading != previousReading) reset()
         previousReading = reading
-        Log.d("MeterAnalyzer", "Previous reading set to: $reading")
+        if (reading > 0) {
+            val formatted = String.format("%05d", reading)
+            readingHistory.addLast(formatted)
+            readingPredictor.recordObservation(formatted)
+        }
+        while (readingHistory.size > 8) readingHistory.removeFirst()
+    }
+
+    fun setGuideBoxNormalized(left: Float, top: Float, right: Float, bottom: Float) {
+        val safeLeft = left.coerceIn(0f, 1f)
+        val safeTop = top.coerceIn(0f, 1f)
+        val safeRight = right.coerceIn(safeLeft + 0.02f, 1f)
+        val safeBottom = bottom.coerceIn(safeTop + 0.02f, 1f)
+
+        guideBoxLeftN = safeLeft
+        guideBoxTopN = safeTop
+        guideBoxRightN = safeRight
+        guideBoxBottomN = safeBottom
     }
 
     fun reset() {
-        resultHistory.clear()
-        consecutiveFailures = 0
-        firstGlimpseTime = 0L
-        
-        // CRITICAL: Clear ALL MLKit state to prevent stale readings from old meter
-        cachedMLKitResult = ""
-        cachedMLKitRects.clear()
-        cachedMLKitTimestamp = 0L
-        mlKitInProgress = false  // FIX: Allow MLKit to restart fresh
-        
-        cachedLenetResult = ""
-        cachedHybridResult = ""
+        readingHistory.clear()
         failureTracker.reset()
-        readingPredictor.reset()  // Reset prediction engine
-        
-        // Reset smart confidence
-        lockedReading = ""
-        lockedFrameCount = 0
-        currentConfidence = 0f
-        lastSeenLockedTime = 0L
-        framesSinceValidReading = 0
-        
-        // FIX: Reset analyzer timestamp to allow immediate processing
+        readingPredictor.reset()
         lastAnalyzedTimestamp = 0L
-        
-        Log.d("MeterAnalyzer", "Full state reset complete - ready for new meter")
-    }
-    
-    /**
-     * Call this when we detect NOTHING valid this frame.
-     * Rapidly decays confidence and releases lock if sustained.
-     */
-    private fun handleNoDetection() {
-        framesSinceValidReading++
-        
-        // Rapid confidence decay when seeing nothing
-        currentConfidence *= NO_DETECTION_DECAY
-        
-        // If we've seen nothing for too long, release the lock entirely
-        if (framesSinceValidReading >= FRAMES_TO_RELEASE_LOCK) {
-            if (lockedReading.isNotEmpty()) {
-                Log.d("MeterAnalyzer", "Releasing lock on '$lockedReading' - no valid detection for $framesSinceValidReading frames")
-            }
-            lockedReading = ""
-            lockedFrameCount = 0
-            currentConfidence = 0f
-            resultHistory.clear()
-        }
-        
-        // Also check time-based timeout
-        val now = System.currentTimeMillis()
-        if (lockedReading.isNotEmpty() && (now - lastSeenLockedTime) > MAX_LOCK_HOLD_TIME) {
-            Log.d("MeterAnalyzer", "Lock timeout on '$lockedReading' - not seen for ${now - lastSeenLockedTime}ms")
-            lockedReading = ""
-            lockedFrameCount = 0
-            currentConfidence = 0f
+        lastLowerLimit = previousReading
+        lastUpperLimit = ReadingValidator.MAX_READING_VALUE
+        lastPredictiveReading = "-"
+        if (previousReading > 0) {
+            val formatted = String.format("%05d", previousReading)
+            readingHistory.addLast(formatted)
+            readingPredictor.recordObservation(formatted)
         }
     }
-    
-    /**
-     * Smart confidence calculation that considers:
-     * 1. How many frames we've seen this reading (temporal persistence)
-     * 2. Previous confidence level (momentum)
-     * 3. Lock-in behavior (resistance to noise once confident)
-     * 4. FAST RELEASE when seeing nothing or different reading
-     * 5. VALIDATION against previous reading - BOOST if valid!
-     * 
-     * @param detectedReading The normalized reading from this frame
-     * @param historyAgreement What percentage of history buffer agrees (0-100)
-     * @return The smart confidence level (0-100)
-     */
-    private fun calculateSmartConfidence(detectedReading: String, historyAgreement: Float): Float {
-        val normalizedDetected = ReadingValidator.normalizeReading(detectedReading)
-        val normalizedLocked = ReadingValidator.normalizeReading(lockedReading)
-        val now = System.currentTimeMillis()
-        
-        // Reset the "no valid reading" counter since we have something
-        framesSinceValidReading = 0
-        
-        // === GET PREDICTION FROM PREDICTOR ===
-        // This is the BRAIN - it combines all observations and previous reading
-        val prediction = readingPredictor.predict(previousReading)
-        val predictedReading = ReadingValidator.normalizeReading(prediction.predictedReading)
-        
-        // === PREDICTION AGREEMENT BOOST ===
-        // If current detection matches what the predictor thinks, HUGE boost!
-        var predictionBoost = 0f
-        if (predictedReading.isNotEmpty() && normalizedDetected == predictedReading) {
-            predictionBoost = 20f  // Detection matches prediction!
-            Log.d("MeterAnalyzer", "PREDICTION MATCH! '$normalizedDetected' = predicted '$predictedReading' (+$predictionBoost%)")
+
+    fun shutdown() {
+        try {
+            textRecognizer.close()
+        } catch (e: Exception) {
+            Log.d("MeterAnalyzer", "Failed to close text recognizer", e)
         }
-        
-        // === VALIDITY CHECK ===
-        // If reading is BELOW previous reading, it's almost certainly wrong
-        val detectedValue = normalizedDetected.toIntOrNull() ?: 0
-        val isBelowPrevious = previousReading > 0 && detectedValue < previousReading && detectedValue > 0
-        if (isBelowPrevious) {
-            // This reading is IMPOSSIBLE (meter can't go backwards)
-            Log.d("MeterAnalyzer", "INVALID: $detectedValue < previous $previousReading - low confidence")
-            currentConfidence = Math.min(currentConfidence, 30f)  // Cap at 30%
-            return currentConfidence
-        }
-        
-        // === VALIDATION BOOST ===
-        // If this reading makes sense given the previous reading, BOOST confidence!
-        var validationBoost = 0f
-        if (previousReading > 0 && normalizedDetected.length >= 4) {
-            val validationResult = ReadingValidator.validateReading(detectedReading, previousReading)
-            if (validationResult.isValid) {
-                validationBoost = if (validationResult.errorCode == ReadingValidator.ErrorCode.VALID) {
-                    25f  // Perfect - reasonable usage
-                } else {
-                    15f  // High usage warning but still valid
-                }
-            }
-        }
-        
-        // === 5-DIGIT BONUS ===
-        val fiveDigitBonus = if (normalizedDetected.length == 5) 15f else 0f
-        
-        // === TOTAL BONUS ===
-        val totalBonus = predictionBoost + validationBoost + fiveDigitBonus
-        
-        // Case 1: Same reading as our lock (or we have no lock yet)
-        if (normalizedDetected == normalizedLocked || lockedReading.isEmpty()) {
-            if (lockedReading.isEmpty() && normalizedDetected.isNotEmpty()) {
-                // First time seeing a valid reading - start tracking
-                lockedReading = detectedReading
-                lastSeenLockedTime = now
-                lockedFrameCount = 1
-                // Start with predictor confidence or base + bonuses
-                currentConfidence = Math.max(
-                    prediction.confidence,
-                    Math.min(100f, 50f + totalBonus)
-                )
-            } else if (normalizedDetected == normalizedLocked) {
-                // Same reading! Increase confidence FAST
-                lockedFrameCount++
-                lastSeenLockedTime = now
-                
-                // Use HIGHER of: growth formula OR predictor confidence
-                val growthConfidence = Math.min(100f, currentConfidence + CONFIDENCE_GROWTH_PER_FRAME + totalBonus/3)
-                currentConfidence = Math.max(growthConfidence, prediction.confidence)
-                
-                // History agreement boost
-                if (historyAgreement > currentConfidence) {
-                    currentConfidence = (currentConfidence + historyAgreement) / 2f
-                }
-            }
-        }
-        // Case 2: DIFFERENT reading detected
-        else {
-            val timeSinceSeen = now - lastSeenLockedTime
-            
-            // === PREDICTOR OVERRIDE ===
-            // If predictor strongly suggests a different reading than our lock, consider switching!
-            if (prediction.confidence > 80f && predictedReading != normalizedLocked && predictedReading == normalizedDetected) {
-                Log.d("MeterAnalyzer", "Predictor override: '$normalizedLocked' -> '$predictedReading' (predictor conf: ${prediction.confidence.toInt()}%)")
-                lockedReading = detectedReading
-                lastSeenLockedTime = now
-                lockedFrameCount = 1
-                currentConfidence = prediction.confidence
-                return currentConfidence
-            }
-            
-            // If we're locked in AND we just saw it recently, resist briefly
-            if (currentConfidence >= LOCK_IN_THRESHOLD && 
-                lockedFrameCount >= MIN_FRAMES_TO_LOCK &&
-                timeSinceSeen < MAX_LOCK_HOLD_TIME) {
-                currentConfidence = Math.max(LOCKED_CONFIDENCE_FLOOR, currentConfidence * 0.9f)
-                Log.d("MeterAnalyzer", "Lock holding: '$lockedReading' (conf: ${currentConfidence.toInt()}%), saw '$normalizedDetected'")
-                return currentConfidence
-            }
-            
-            // Lock expired or not strong enough - SWITCH to new reading
-            Log.d("MeterAnalyzer", "Switching: '$lockedReading' -> '$normalizedDetected' (old conf: ${currentConfidence.toInt()}%)")
-            
-            currentConfidence *= CONFIDENCE_DECAY_FACTOR
-            lockedReading = detectedReading
-            lastSeenLockedTime = now
-            lockedFrameCount = 1
-            
-            // Start with predictor confidence or calculated confidence
-            currentConfidence = Math.max(
-                currentConfidence,
-                Math.max(prediction.confidence, Math.min(100f, 45f + totalBonus))
-            )
-        }
-        
-        // Final log
-        Log.d("MeterAnalyzer", "SmartConf: detected='$normalizedDetected', predicted='$predictedReading', predConf=${prediction.confidence.toInt()}%, finalConf=${currentConfidence.toInt()}%")
-        
-        return currentConfidence
-    }
-    
-    /**
-     * Gets the current best reading (might be the locked one, not the latest frame)
-     */
-    private fun getBestReading(frameReading: String): String {
-        val normalizedFrame = ReadingValidator.normalizeReading(frameReading)
-        val normalizedLocked = ReadingValidator.normalizeReading(lockedReading)
-        val now = System.currentTimeMillis()
-        val timeSinceSeen = now - lastSeenLockedTime
-        
-        // Only use locked reading if:
-        // 1. We're confident
-        // 2. We've seen it enough times  
-        // 3. We saw it RECENTLY (within timeout)
-        if (lockedReading.isNotEmpty() && 
-            currentConfidence >= LOCK_IN_THRESHOLD && 
-            lockedFrameCount >= MIN_FRAMES_TO_LOCK &&
-            timeSinceSeen < MAX_LOCK_HOLD_TIME &&
-            normalizedFrame != normalizedLocked) {
-            
-            Log.d("MeterAnalyzer", "Using locked '$lockedReading' instead of frame '$frameReading'")
-            return ReadingValidator.formatReading(lockedReading)
-        }
-        
-        return ReadingValidator.formatReading(frameReading)
-    }
-    
-    /**
-     * Helper function to emit validated results.
-     * This centralizes validation and failure tracking logic.
-     */
-    private fun emitResult(
-        reading: String,
-        confidence: Float,
-        allRects: List<Rect>,
-        acceptedRects: List<Rect>,
-        imageWidth: Int,
-        imageHeight: Int,
-        source: String
-    ) {
-        // Perform validation if we have a previous reading
-        val validationResult = if (reading.isNotEmpty() && previousReading > 0) {
-            ReadingValidator.validateReading(reading, previousReading)
-        } else {
-            null
-        }
-        
-        // Track failures for suggesting manual input
-        if (validationResult != null) {
-            if (validationResult.isValid) {
-                failureTracker.recordSuccess()
-            } else {
-                failureTracker.recordFailure(validationResult.errorCode)
-                
-                // CRITICAL FIX: If we're repeatedly seeing INVALID readings with high confidence,
-                // it means we're stuck with stale state. Clear locks and caches!
-                if (confidence > 80f && (validationResult.errorCode == ReadingValidator.ErrorCode.READING_TOO_LOW ||
-                                        validationResult.errorCode == ReadingValidator.ErrorCode.IMPOSSIBLE_USAGE)) {
-                    Log.d("MeterAnalyzer", "STUCK DETECTION: High confidence ($confidence%) but INVALID ($${validationResult.errorCode}). Forcing reset of locks!")
-                    lockedReading = ""
-                    lockedFrameCount = 0
-                    currentConfidence = 0f
-                    resultHistory.clear()
-                    cachedMLKitResult = ""
-                    cachedMLKitRects.clear()
-                    cachedMLKitTimestamp = 0L
-                }
-            }
-        } else if (reading.length < 4) {
-            failureTracker.recordFailure(ReadingValidator.ErrorCode.TOO_FEW_DIGITS)
-        }
-        
-        // Determine if we should suggest manual input
-        val shouldSuggestManual = failureTracker.shouldSuggestManualInput()
-        
-        // If validation failed but we can auto-correct, use the cleaned reading
-        val finalReading = if (validationResult != null && 
-                               validationResult.cleanedReading != reading && 
-                               validationResult.isValid) {
-            Log.d("MeterAnalyzer", "Auto-corrected: $reading → ${validationResult.cleanedReading}")
-            validationResult.cleanedReading
-        } else {
-            reading
-        }
-        
-        // === DEAD SIMPLE CONFIDENCE LOGIC ===
-        // 1. If we detected 5 digits AND it's valid (>= previous), give HIGH confidence
-        // 2. If it's below previous (impossible), give LOW confidence
-        // 3. That's it. No overthinking.
-        
-        val detectedValue = reading.toIntOrNull() ?: 0
-        val hasFiveDigits = reading.length == 5 || ReadingValidator.normalizeReading(reading).length >= 4
-        
-        val finalConfidence: Float
-        
-        if (validationResult == null) {
-            // No previous reading to compare - just use detection confidence
-            finalConfidence = if (hasFiveDigits && confidence >= 50f) 95f else confidence
-        } else if (validationResult.isValid) {
-            // VALID reading (>= previous) - HIGH CONFIDENCE!
-            finalConfidence = if (hasFiveDigits) 100f else Math.max(confidence, 90f)
-        } else if (validationResult.errorCode == ReadingValidator.ErrorCode.READING_TOO_LOW) {
-            // IMPOSSIBLE - meter went backwards - LOW confidence
-            finalConfidence = 30f
-        } else {
-            // Other issues - medium confidence
-            finalConfidence = Math.min(confidence, 60f)
-        }
-        
-        Log.d("MeterAnalyzer", "emitResult SIMPLE: reading='$finalReading', valid=${validationResult?.isValid}, 5dig=$hasFiveDigits, prev=$previousReading -> $finalConfidence%")
-        
-        val result = AnalyzerResult(
-            reading = finalReading,
-            confidence = finalConfidence,
-            allRects = allRects,
-            acceptedRects = acceptedRects,
-            imageWidth = imageWidth,
-            imageHeight = imageHeight,
-            source = source,
-            validationResult = validationResult,
-            shouldSuggestManualInput = shouldSuggestManual
-        )
-        
-        onResult(result)
-        mlKitInProgress = false
     }
 
     override fun analyze(image: ImageProxy) {
-        val currentTimestamp = System.currentTimeMillis()
-        if (currentTimestamp - lastAnalyzedTimestamp < interval) {
+        val now = System.currentTimeMillis()
+        if (now - lastAnalyzedTimestamp < intervalMs) {
             image.close()
             return
         }
-        lastAnalyzedTimestamp = currentTimestamp
+        lastAnalyzedTimestamp = now
 
         try {
-            // 1. Convert ImageProxy to Mat
-            val mat = imageProxyToMat(image)
-            if (mat.empty()) {
-                image.close()
-                return
-            }
-            
-            val imageWidth = mat.width()
-            val imageHeight = mat.height()
+            val frameBitmap = image.toBitmapCompat() ?: return
+            val rotated = rotateIfNeeded(frameBitmap, image.imageInfo.rotationDegrees)
 
-            // 2. Preprocessing & ROI (Area Masking)
-            // We define a specific "Area Mask" or Region of Interest (ROI) to avoid hallucinations from the background.
-            // The visual guide box is roughly 2:1 aspect ratio (300dp x 150dp).
-            // We adjust the crop to match this tighter area so we don't scan pipes or other meter parts.
-            
-            // Height: Reduced from 1/3 (33%) to 1/5 (20%) to match the visual guide box height better.
-            val cropHeight = mat.height() / 5
-            val cropCenterY = mat.height() * 0.4
-            val cropY = (cropCenterY - cropHeight / 2).toInt().coerceAtLeast(0)
-            
-            // Width: Reduced to 70% to focus more on the center.
-            val cropWidth = (mat.width() * 0.70).toInt()
-            val cropX = (mat.width() - cropWidth) / 2
-            
-            val cropRect = Rect(cropX, cropY, cropWidth, cropHeight)
-            val croppedMat = Mat(mat, cropRect)
+            val frameW = rotated.width
+            val frameH = rotated.height
+            val cropRect = buildMeterCropRect(frameW, frameH)
+            val maskedFrame = maskOutsideGuideBox(rotated, cropRect)
+            val cropped = Bitmap.createBitmap(maskedFrame, cropRect.x, cropRect.y, cropRect.width, cropRect.height)
+            val focusedCrop = maskInsideGuideCrop(cropped, 0f)
 
-            // --- 0. BACKGROUND ML KIT (Parallel Execution) ---
-            // We fire this off every frame (if not busy) to have a "second opinion" ready.
-            if (!mlKitInProgress) {
-                mlKitInProgress = true
-                // Create a copy for ML Kit so we don't block or race on 'mat'
-                // We use the CROPPED image for ML Kit to strictly follow the guide box
-                val mlKitBitmap = Bitmap.createBitmap(croppedMat.width(), croppedMat.height(), Bitmap.Config.ARGB_8888)
-                Utils.matToBitmap(croppedMat, mlKitBitmap)
-                
-                // Capture crop offsets for coordinate mapping
-                val offsetX = cropX
-                val offsetY = cropY
-
-                mlKitExecutor.execute {
-                    try {
-                        val inputImage = InputImage.fromBitmap(mlKitBitmap, 0)
-                        
-                        textRecognizer.process(inputImage)
-                            .addOnSuccessListener { mlKitResult ->
-                                var bestText = ""
-                                val newRects = ArrayList<Rect>()
-                                
-                                // Parse ML Kit result
-                                for (block in mlKitResult.textBlocks) {
-                                    val text = block.text.replace(" ", "").replace("\n", "")
-                                    
-                                    // Regex: Look for 4 or 5 consecutive digits
-                                    // We allow 4 digits to catch the stable prefix even if the rolling digit is missed.
-                                    val match = Regex("\\d{4,5}").find(text)
-                                    
-                                    if (match != null) {
-                                        bestText = match.value
-                                        val androidBox = block.boundingBox
-                                        if (androidBox != null) {
-                                            // Create the "Green Text" slices for visualization
-                                            val safeBox = Rect(
-                                                Math.max(0, androidBox.left),
-                                                Math.max(0, androidBox.top),
-                                                Math.min(mlKitBitmap.width - androidBox.left, androidBox.width()),
-                                                Math.min(mlKitBitmap.height - androidBox.top, androidBox.height())
-                                            )
-                                            
-                                            // Slice into N equal parts (Trojan Horse Strategy)
-                                            val len = bestText.length
-                                            val digitWidth = safeBox.width / len
-                                            val digitHeight = safeBox.height
-                                            
-                                            for (i in 0 until len) {
-                                                newRects.add(Rect(
-                                                    safeBox.x + (i * digitWidth) + offsetX, // Add crop offset
-                                                    safeBox.y + offsetY,                   // Add crop offset
-                                                    digitWidth,
-                                                    digitHeight
-                                                ))
-                                            }
-                                        }
-                                        break // Take first valid block
-                                    }
-                                }
-                                
-                                if (bestText.isNotEmpty()) {
-                                    cachedMLKitResult = bestText
-                                    cachedMLKitRects = newRects
-                                    cachedMLKitTimestamp = System.currentTimeMillis()  // Timestamp when MLKit detected
-                                }
-                                mlKitInProgress = false
-                            }
-                            .addOnFailureListener { 
-                                mlKitInProgress = false 
-                            }
-                    } catch (e: Exception) {
-                        mlKitInProgress = false
-                    }
-                }
-            }
-
-            val gray = Mat()
-            Imgproc.cvtColor(croppedMat, gray, Imgproc.COLOR_RGB2GRAY)
-
-            // Blur to reduce noise
-            Imgproc.GaussianBlur(gray, gray, Size(5.0, 5.0), 0.0)
-
-            // Thresholding to find digits
-            val binary = Mat()
-            
-            // --- OPTION B: HYBRID MSER + ADAPTIVE THRESHOLD ---
-            // 1. Get crisp pixels using Adaptive Threshold (good for details, bad for noise)
-            val adaptiveBinary = Mat()
-            Imgproc.adaptiveThreshold(
-                gray, adaptiveBinary, 255.0,
-                Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
-                Imgproc.THRESH_BINARY_INV, // Invert: White text on Black
-                45, 5.0 // Block 45 (Smoother), C 5.0 (Thicker digits)
+            val mlPrimary = runMlKitPipeline(
+                cropped = focusedCrop,
+                cropRect = cropRect,
+                pass = "ROI",
+                includeThresholdVariant = false,
+                allowSlotFallback = false
             )
-            
-            // 2. Get robust regions using MSER (good for finding text, ignores lighting)
-            // (Using class-level mser instance)
-            
-            val mserContours = ArrayList<MatOfPoint>()
-            val mserBboxes = MatOfRect()
-            mser.detectRegions(gray, mserContours, mserBboxes)
-            
-            // 3. Create a mask from MSER regions
-            val mserMask = Mat.zeros(gray.size(), CvType.CV_8UC1)
-            for (c in mserContours) {
-                val rect = Imgproc.boundingRect(c)
-                val ratio = rect.width.toDouble() / rect.height.toDouble()
-                // Relaxed filter for the mask
-                if (ratio > 0.1 && ratio < 1.5) { 
-                     Imgproc.drawContours(mserMask, listOf(c), -1, Scalar(255.0), Imgproc.FILLED)
-                }
-            }
-            
-            // Dilate the mask slightly to ensure we don't clip the edges of the digits
-            val maskKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0))
-            Imgproc.dilate(mserMask, mserMask, maskKernel)
-            
-            // 4. Combine: Keep pixels that are High Contrast (Adaptive) AND inside a Stable Region (MSER)
-            // This fixes the "rounded/blurred" look of raw MSER blobs while keeping the noise rejection.
-            binary.create(gray.size(), CvType.CV_8UC1)
-            Core.bitwise_and(adaptiveBinary, mserMask, binary)
-            
-            // Clean up salt-and-pepper noise from the adaptive threshold
-            Imgproc.medianBlur(binary, binary, 3)
-            
-            // Clean up intermediate Mats
-            adaptiveBinary.release()
-            mserMask.release()
-
-            // --- DYNAMIC WINDOW DETECTION (Digit Holder Finder) ---
-            // Instead of processing the whole crop, we look for the specific rectangular "window"
-            // that holds the digits. This helps ignore noise outside the actual meter display.
-            
-            var workingBinary = binary
-            var workingBinaryThin: Mat? = null
-            var windowOffsetX = 0
-            var windowOffsetY = 0
-            
-            // 1. Morphological Close to connect digits into a single blob
-            val morphMat = Mat()
-            val kernelWindow = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(30.0, 5.0)) // Wide kernel
-            Imgproc.morphologyEx(binary, morphMat, Imgproc.MORPH_CLOSE, kernelWindow)
-            
-            // 2. Find contours of these blobs
-            val windowContours = ArrayList<MatOfPoint>()
-            Imgproc.findContours(morphMat, windowContours, Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
-            
-            // 3. Find the best candidate for the "Digit Window"
-            var bestWindowRect: Rect? = null
-            var maxArea = 0.0
-            
-            for (c in windowContours) {
-                val r = Imgproc.boundingRect(c)
-                val area = r.area()
-                val ratio = r.width.toDouble() / r.height.toDouble()
-                
-                // Filter: Must be wide (strip-like) and have significant size
-                if (ratio > 2.0 && area > (binary.width() * binary.height() * 0.05)) {
-                    if (area > maxArea) {
-                        maxArea = area
-                        bestWindowRect = r
-                    }
-                }
-            }
-            
-            morphMat.release()
-            // kernelWindow.release() // Mat returned by getStructuringElement needs release? In Java OpenCV it's a Mat.
-            
-            // 4. If found, crop to this window!
-            if (bestWindowRect != null) {
-                // Add padding
-                val pad = 15
-                val x = (bestWindowRect.x - pad).coerceAtLeast(0)
-                val y = (bestWindowRect.y - pad).coerceAtLeast(0)
-                val w = (bestWindowRect.width + 2 * pad).coerceAtMost(binary.width() - x)
-                val h = (bestWindowRect.height + 2 * pad).coerceAtMost(binary.height() - y)
-                
-                val paddedRect = Rect(x, y, w, h)
-                
-                // Update offsets for final coordinate mapping
-                windowOffsetX = x
-                windowOffsetY = y
-                
-                // Create sub-mats (Views)
-                workingBinary = Mat(binary, paddedRect)
-                
-                // We need to clone binary for 'thin' BEFORE we overwrite 'workingBinary' logic if we were reusing vars
-                // But here we just take a submat of the original binary for the thin pass later.
-                // Wait, binaryThin hasn't been created yet. We should create it from the cropped binary.
-            }
-
-            // Create a copy for the "Thin" pass (Before Dilation)
-            // We use workingBinary which is either the full crop or the focused window
-            val binaryThin = workingBinary.clone()
-
-            // Thicken digits (Dilate) for the "Thick" pass.
-            // This helps "1" survive and closes gaps in "0".
-            val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_CROSS, Size(3.0, 3.0))
-            Imgproc.dilate(workingBinary, workingBinary, kernel)
-
-            // Find contours
-            val contours = ArrayList<MatOfPoint>()
-            val hierarchy = Mat()
-            Imgproc.findContours(
-                workingBinary, contours, hierarchy,
-                Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE
-            )
-
-            // Debug: Prepare a color image to draw rectangles on for visualization
-            var debugMat: Mat? = null
-            if (captureDebugNextFrame) {
-                debugMat = Mat()
-                Imgproc.cvtColor(workingBinary, debugMat, Imgproc.COLOR_GRAY2RGB)
-            }
-
-            // Filter contours to find potential digits
-            val digitRects = ArrayList<Rect>()
-            val allRects = ArrayList<Rect>()
-            val acceptedRects = ArrayList<Rect>()
-            val badContours = ArrayList<MatOfPoint>()
-            
-            // Update cropHeight reference for filtering logic
-            val activeHeight = workingBinary.height()
-
-            for (contour in contours) {
-                val rect = Imgproc.boundingRect(contour)
-                val aspectRatio = rect.width.toDouble() / rect.height.toDouble()
-                
-                // Convert to Rect for Overlay (Offset by cropX + windowOffsetX, etc)
-                val opencvRect = Rect(
-                    rect.x + cropX + windowOffsetX, 
-                    rect.y + cropY + windowOffsetY, 
-                    rect.width, 
-                    rect.height
+            val mlThreshold = if (needsFallback(mlPrimary)) {
+                runMlKitPipeline(
+                    cropped = focusedCrop,
+                    cropRect = cropRect,
+                    pass = "THR",
+                    includeThresholdVariant = true,
+                    allowSlotFallback = false
                 )
-                allRects.add(opencvRect)
+            } else {
+                null
+            }
+            val mlCutoff = if ((mlThreshold ?: mlPrimary).candidate?.reading?.length ?: 0 < 5) {
+                runCutoffRecovery(cropped, cropRect, now)
+            } else {
+                null
+            }
 
-                // Draw ALL detected contours in RED (for debug)
-                if (debugMat != null) {
-                    Imgproc.rectangle(debugMat, rect, Scalar(255.0, 0.0, 0.0), 1)
+            val finalMlEngineResult = listOfNotNull(mlPrimary, mlThreshold, mlCutoff)
+                .reduce(::chooseBetterEngineResult)
+
+            val geometryCandidate = buildAlignedFiveDigitCandidate(
+                finalMlEngineResult.tokens
+            )
+
+            val mlCandidate = finalMlEngineResult.candidate
+            val hasAnyOcrSignal =
+                finalMlEngineResult.rawText.isNotBlank() ||
+                finalMlEngineResult.tokens.isNotEmpty()
+
+            val candidates = listOfNotNull(geometryCandidate, mlCandidate)
+
+            val bestRawCandidate = candidates.maxByOrNull { (it.reading.length * 100f) + it.confidence }
+            val hasPredictiveSignal = hasAnyOcrSignal || bestRawCandidate != null
+            val canPredict = previousReading > 0 || readingHistory.isNotEmpty()
+
+            val resolved = when {
+                candidates.isNotEmpty() -> resolveFinalReading(candidates)
+                hasPredictiveSignal || canPredict -> resolveFromPredictionOnly()
+                else -> ResolvedReading("", 0f, emptyList(), "N", false)
+            }
+            val hasDecisionReading = resolved.reading.length == 5
+            val hasStrictFiveDigitEvidence = hasDecisionReading && resolved.hasFreshEvidence
+            val readingForValidation = if (hasStrictFiveDigitEvidence) resolved.reading else ""
+
+            val validation = if (readingForValidation.isNotEmpty() && previousReading > 0) {
+                ReadingValidator.validateReading(resolved.reading, previousReading)
+            } else {
+                null
+            }
+
+            val isPredictiveOnly = resolved.source == "X"
+            val predictiveValidCap = 78f
+            val predictiveWarnCap = 72f
+
+            val finalReading = when {
+                hasStrictFiveDigitEvidence &&
+                    validation != null &&
+                    validation.isValid &&
+                    validation.cleanedReading != resolved.reading -> {
+                    validation.cleanedReading
                 }
+                hasStrictFiveDigitEvidence -> resolved.reading
+                !hasAnyOcrSignal -> ""
+                else -> bestRawCandidate?.reading ?: ""
+            }
 
-                // Filter based on size and aspect ratio (digits are usually tall)
-                // Relaxed constraints:
-                // Height: > 15% of active window height
-                // Aspect Ratio: > 0.08 (was 0.15) to catch very thin "1"s.
-                // Border Check: Reject if height > 85% of active window (likely a vertical separator line)
-                val isBorder = rect.height > activeHeight * 0.85
-                
-                if (!isBorder &&
-                    rect.height > activeHeight * 0.15 && 
-                    rect.height < activeHeight * 0.95 &&
-                    aspectRatio > 0.08 && aspectRatio < 1.0) {
-                    
-                    digitRects.add(rect)
-                    acceptedRects.add(opencvRect)
-                    // Draw ACCEPTED digits in GREEN (for debug)
-                    if (debugMat != null) {
-                        Imgproc.rectangle(debugMat, rect, Scalar(0.0, 255.0, 0.0), 2)
-                    }
+            val finalConfidence = when {
+                hasStrictFiveDigitEvidence && finalReading.isEmpty() -> 0f
+                !hasStrictFiveDigitEvidence -> when (finalReading.length) {
+                    4 -> minOf(78f, (bestRawCandidate?.confidence ?: 0f) + 5f)
+                    3 -> minOf(65f, bestRawCandidate?.confidence ?: 0f)
+                    in 1..2 -> minOf(50f, bestRawCandidate?.confidence ?: 0f)
+                    else -> 0f
+                }
+                validation == null -> {
+                    if (isPredictiveOnly) minOf(predictiveValidCap, maxOf(62f, resolved.confidence)) else resolved.confidence
+                }
+                validation.isValid && validation.errorCode == ReadingValidator.ErrorCode.VALID -> {
+                    if (isPredictiveOnly) minOf(predictiveValidCap, maxOf(66f, resolved.confidence)) else maxOf(90f, resolved.confidence)
+                }
+                validation.isValid -> {
+                    if (isPredictiveOnly) minOf(predictiveWarnCap, maxOf(60f, resolved.confidence)) else maxOf(80f, resolved.confidence)
+                }
+                validation.errorCode == ReadingValidator.ErrorCode.READING_TOO_LOW -> minOf(35f, resolved.confidence)
+                else -> minOf(60f, resolved.confidence)
+            }
+
+            if (validation != null) {
+                if (validation.isValid) {
+                    failureTracker.recordSuccess()
                 } else {
-                    // Only mark as BAD (paint black) if it's definitely noise (too small)
-                    // If it's just a border or weird shape, don't paint it black, just ignore it.
-                    // This prevents us from accidentally erasing parts of valid digits that overlap with "bad" regions.
-                    if (rect.height < activeHeight * 0.15 || rect.width < 5) {
-                         badContours.add(contour)
-                    }
+                    failureTracker.recordFailure(validation.errorCode)
                 }
+            } else if (hasStrictFiveDigitEvidence) {
+                failureTracker.recordSuccess()
+            } else if (finalReading.length < 4 && !hasAnyOcrSignal) {
+                failureTracker.recordFailure(ReadingValidator.ErrorCode.TOO_FEW_DIGITS)
             }
 
-            // NOISE REMOVAL: Paint all "Small Noise" contours BLACK on the binary image.
-            if (badContours.isNotEmpty()) {
-                Imgproc.drawContours(workingBinary, badContours, -1, Scalar(0.0), Imgproc.FILLED)
+            if (hasStrictFiveDigitEvidence && finalReading.length == 5 && (validation == null || validation.isValid)) {
+                readingHistory.addLast(finalReading)
+                while (readingHistory.size > 8) readingHistory.removeFirst()
+                readingPredictor.recordObservation(finalReading)
             }
 
-            // --- CONSENSUS FILTERING (Height & Alignment) ---
-            // Instead of simple averages or single anchors which can be skewed by noise,
-            // we use a voting system to find the "Dominant Group" of rectangles.
-            // Valid digits will share similar Height and Y-Position.
-            
-            if (digitRects.isNotEmpty()) {
-                // 1. Vote: Each rect counts how many "friends" it has (similar height & y-align)
-                val scores = digitRects.mapIndexed { index, ref ->
-                    var count = 0
-                    for (other in digitRects) {
-                        if (ref === other) continue
-                        val hRatio = other.height.toDouble() / ref.height.toDouble()
-                        val yDiff = Math.abs((other.y + other.height/2.0) - (ref.y + ref.height/2.0))
-                        
-                        // Strict criteria for "Friendship"
-                        // Height within 15%
-                        // Y-Center aligned within 30% of height
-                        if (hRatio > 0.85 && hRatio < 1.15 && yDiff < (ref.height * 0.3)) {
-                            count++
-                        }
-                    }
-                    // Tie-breaker: Prefer rects closer to the center of the image
-                    val cropCenterX = workingBinary.width() / 2
-                    val dist = Math.abs((ref.x + ref.width/2) - cropCenterX)
-                    val centrality = 1.0 - (dist.toDouble() / workingBinary.width())
-                    
-                    // Score = Count + small bonus for centrality
-                    Pair(index, count + (centrality * 0.1))
-                }
-                
-                // Find the winner (Best Reference Digit)
-                val best = scores.maxByOrNull { it.second }
-                
-                if (best != null) {
-                    val ref = digitRects[best.first]
-                    val refHeight = ref.height.toDouble()
-                    val refCenterY = ref.y + ref.height / 2.0
-                    
-                    val filteredDigitRects = ArrayList<Rect>()
-                    val filteredAcceptedRects = ArrayList<Rect>()
-                    
-                    // 2. Filter: Keep everyone who fits with the Winner
-                    for (i in digitRects.indices) {
-                        val rect = digitRects[i]
-                        val hRatio = rect.height.toDouble() / refHeight
-                        val yDiff = Math.abs((rect.y + rect.height/2.0) - refCenterY)
-                        
-                        // STRICTER inclusion criteria to reject noise (m3, pipes)
-                        // Height within 15% (was 20%)
-                        // Y-Center aligned within 20% of height (was 50%)
-                        // RELAXED for Rolling Digits: Allow height to be 60% - 140% of reference
-                        // This catches "halved" digits that are rolling in/out.
-                        if (hRatio > 0.60 && hRatio < 1.40 && yDiff < (refHeight * 0.3)) {
-                            filteredDigitRects.add(rect)
-                            filteredAcceptedRects.add(acceptedRects[i])
-                        }
-                    }
-                    
-                    // 3. Sort Left-to-Right
-                    // We need to zip them to sort together, then unzip
-                    val combined = filteredDigitRects.zip(filteredAcceptedRects)
-                    val sorted = combined.sortedBy { (r, _) -> r.x }
-                    
-                    // 4. Limit to EXACTLY 5 Digits (Water Meter Standard)
-                    // If we have > 5, we assume the extras are noise.
-                    // Strategy: Find the "Best 5" that form a tight chain.
-                    val finalSelection = if (sorted.size > 5) {
-                        // If we have 6 or 7, usually the noise is on the far right (m3) or far left.
-                        // We calculate the "Gap Variance" for sliding windows of 5.
-                        // Real digits have consistent spacing.
-                        
-                        var bestWindow = sorted.take(5)
-                        var minVariance = Double.MAX_VALUE
-                        
-                        for (i in 0..sorted.size - 5) {
-                            val window = sorted.subList(i, i + 5)
-                            // Calculate gaps
-                            val gaps = window.zipWithNext { a, b -> (b.first.x - (a.first.x + a.first.width)).toDouble() }
-                            val avgGap = gaps.average()
-                            val variance = gaps.sumOf { Math.pow(it - avgGap, 2.0) }
-                            
-                            if (variance < minVariance) {
-                                minVariance = variance
-                                bestWindow = window
-                            }
-                        }
-                        bestWindow
-                    } else {
-                        sorted
-                    }
-                    
-                    digitRects.clear()
-                    acceptedRects.clear()
-                    finalSelection.forEach { (r, ar) ->
-                        digitRects.add(r)
-                        acceptedRects.add(ar)
-                    }
-                }
-            }
-
-            // Save the full debug strip with rectangles
-            if (captureDebugNextFrame && debugMat != null) {
-                val debugStripBitmap = Bitmap.createBitmap(debugMat.width(), debugMat.height(), Bitmap.Config.ARGB_8888)
-                Utils.matToBitmap(debugMat, debugStripBitmap)
-                saveDebugImage(debugStripBitmap, "debug_strip_${dateFormatter.format(Date())}_${debugCounter}.png")
-                debugMat.release()
-                captureDebugNextFrame = false // Reset immediately, we only want the strip
-            }
-
-            // Sort rects from left to right (Already done above, but safe to keep if logic changes)
-            // digitRects.sortBy { it.x }
-
-            // Limit to 5 digits (or whatever logic fits)
-            // If we have too many, maybe we only take the ones in the center?
-            // For now, let's just process up to 5 valid looking ones.
-            
-            val resultBuilder = StringBuilder()
-            
-            // If we found nothing, maybe try the center crop?
-            // But let's stick to the contours for now.
-            
-            var count = 0
-            for (rect in digitRects) {
-                if (count >= 5) break // Strict limit to 5 digits
-                
-                // --- DUAL PASS CLASSIFICATION ---
-                
-                // Pass 1: Thick (Dilated) - Good for '1', '7', '5'
-                val digitMatThick = Mat(workingBinary, rect)
-                val digitBitmapThick = processMatForModel(digitMatThick, rect)
-                val predThick = classifier.classify(digitBitmapThick)
-                digitMatThick.release()
-
-                // Pass 2: Thin (Original) - Good for '6', '8', '9', '0' (Preserves holes)
-                val digitMatThin = Mat(binaryThin, rect)
-                val digitBitmapThin = processMatForModel(digitMatThin, rect)
-                val predThin = classifier.classify(digitBitmapThin)
-                
-                // GEOMETRIC ANALYSIS: Check Center Density
-                // '0' is hollow in the middle. '6', '8', '9' have strokes crossing the center.
-                val centerDensity = calculateCenterDensity(digitMatThin)
-                
-                // GEOMETRIC ANALYSIS: Aspect Ratio for '1'
-                // '1' is significantly taller than it is wide.
-                val rectAspectRatio = rect.width.toDouble() / rect.height.toDouble()
-                
-                digitMatThin.release()
-
-                // JUDGEMENT LOGIC
-                var finalDigit = predThick
-
-                // 0. Geometric Override for '1'
-                // If the digit is very thin (Aspect Ratio < 0.5), it is almost certainly a '1'.
-                // This fixes the "1 detected as 2" issue where noise makes the 1 look like a curve.
-                if (rectAspectRatio < 0.5) {
-                    finalDigit = 1
-                }
-                // 1. Trust '1' from Thick (Thin often breaks 1s)
-                else if (predThick == 1) {
-                    finalDigit = 1
-                } 
-                // 2. Trust Thin for '6', '8', '9' if Thick sees '0' (Blob vs Detail)
-                else if (predThick == 0 && (predThin == 6 || predThin == 8 || predThin == 9)) {
-                    finalDigit = predThin
-                }
-                // 3. Ambiguity: Both think it's '0', or Thick='8'/Thin='0'
-                else if (predThick == 0 || predThin == 0) {
-                    // Check the center. 
-                    // A real '0' is hollow (Density ~0.0 - 0.1).
-                    // A '6' or '8' has a middle stroke (Density > 0.15).
-                    // We lowered the threshold from 0.35 to 0.12 because thin lines have low density.
-                    if (centerDensity > 0.12) { 
-                        // Center is NOT empty. It cannot be a clean 0.
-                        if (predThin == 6 || predThin == 8 || predThin == 9) {
-                            finalDigit = predThin
-                        } else {
-                            // Both models failed to see the structure, but geometry confirms a middle stroke.
-                            // "Locked in the middle" -> Likely a 6.
-                            finalDigit = 6
-                        }
-                    } else {
-                        // Center is hollow. It's a valid 0.
-                        finalDigit = 0
-                    }
-                } 
-                // 4. Noise Check: Thick='8' but Thin='0' -> Likely noise closed the 0
-                else if (predThick == 8 && predThin == 0) {
-                     if (centerDensity < 0.12) {
-                        finalDigit = 0
-                     } else {
-                        finalDigit = 8
-                     }
-                }
-                // 5. 2 vs 8 Confusion (User Report: 02102 -> 02108)
-                // '2' has a tail and is open at the top-left and bottom-right. '8' is closed.
-                // If Thin says 2, it's likely a 2 (thin lines preserve the opening).
-                // If Thick says 8, it might be a 2 that got bloated.
-                else if (predThick == 8 && predThin == 2) {
-                    finalDigit = 2
-                }
-                // 6. Fallback
-                else if (predThick == -1 && predThin != -1) {
-                    finalDigit = predThin
-                }
-
-                /*
-                if (captureDebugNextFrame) {
-                    // Save both for analysis
-                    saveDigitBitmap(digitBitmapThick, predThick, rect, "thick")
-                    saveDigitBitmap(digitBitmapThin, predThin, rect, "thin_d${String.format("%.2f", centerDensity)}")
-                }
-                */
-                
-                resultBuilder.append(if (finalDigit != -1) finalDigit.toString() else "?")
-                count++
-            }
-
-            var currentResult = resultBuilder.toString()
-            
-            // === TRAILING NOISE DETECTION ===
-            // If we got more than 5 digits, we have noise at the end (e.g., "045251" -> "04525")
-            // This happens when a small artifact after the 5th digit gets detected
-            if (currentResult.length > 5) {
-                Log.d("MeterAnalyzer", "Detected ${currentResult.length} digits: '$currentResult'. Trimming trailing noise.")
-                // Keep only the first 5 digits (the real meter reading)
-                currentResult = currentResult.take(5)
-            }
-
-            // --- PARTIAL MATCH RECOVERY ---
-            // If we only found 4 digits (e.g. 0161), check if we recently saw a 5-digit version (0161x).
-            // This handles cases where the last digit is rolling or obscured but was briefly visible.
-            // Use NORMALIZED comparison (so "4525" can match with history entries like "04525")
-            val normalizedCurrent = ReadingValidator.normalizeReading(currentResult)
-            if (normalizedCurrent.length == 4 || (currentResult.length == 4 && normalizedCurrent.length <= 4)) {
-                // Look for history entries that START with the same prefix
-                val potentialMatches = resultHistory.filter { historyEntry ->
-                    val normalizedHistory = ReadingValidator.normalizeReading(historyEntry)
-                    normalizedHistory.length >= 5 && normalizedHistory.startsWith(normalizedCurrent)
-                }
-                if (potentialMatches.isNotEmpty()) {
-                    // Find the most frequent 5th digit (use normalized grouping)
-                    val bestMatch = potentialMatches
-                        .groupingBy { ReadingValidator.normalizeReading(it) }
-                        .eachCount()
-                        .maxByOrNull { it.value }?.key
-                    if (bestMatch != null) {
-                        currentResult = ReadingValidator.formatReading(bestMatch)
-                    }
-                }
-            }
-
-            // --- TIMER & OVERRIDE LOGIC ---
-            // Track when we first started seeing *something* (at least 3 digits)
-            if (currentResult.length >= 3) {
-                if (firstGlimpseTime == 0L) firstGlimpseTime = System.currentTimeMillis()
+            val finalRects = if (hasStrictFiveDigitEvidence) {
+                resolved.rects
             } else {
-                // If we lose track, reset the timer (unless ML Kit has a lock)
-                if (cachedMLKitResult.isEmpty()) {
-                    firstGlimpseTime = 0L
-                }
-            }
-            
-            val timeSinceGlimpse = System.currentTimeMillis() - firstGlimpseTime
-            val isTakingTooLong = firstGlimpseTime > 0 && timeSinceGlimpse > 2000 // 2 seconds timeout
-
-            // === MLKIT CACHE EXPIRY ===
-            // If MLKit result is stale (older than 500ms), clear it!
-            // This prevents "stuck" readings when camera moves away
-            val now = System.currentTimeMillis()
-            if (cachedMLKitResult.isNotEmpty() && (now - cachedMLKitTimestamp) > MLKIT_CACHE_EXPIRY_MS) {
-                Log.d("MeterAnalyzer", "MLKit cache expired: '$cachedMLKitResult' (age: ${now - cachedMLKitTimestamp}ms)")
-                cachedMLKitResult = ""
-                cachedMLKitRects.clear()
-                cachedMLKitTimestamp = 0L
+                bestRawCandidate?.slotRects ?: emptyList()
             }
 
-            // --- INTEGRATION: ML KIT "JUDGE" ---
-            if (cachedMLKitResult.isNotEmpty()) {
-                // CRITICAL PRE-VALIDATION: Check if cached MLKit result is even valid
-                // This prevents using stale readings from a previous meter
-                val mlKitValue = cachedMLKitResult.toIntOrNull() ?: 0
-                val mlKitIsInvalid = previousReading > 0 && mlKitValue > 0 && mlKitValue < previousReading
-                
-                if (mlKitIsInvalid) {
-                    Log.d("MeterAnalyzer", "Cached MLKit result '$cachedMLKitResult' is INVALID (< previous $previousReading). Clearing cache!")
-                    cachedMLKitResult = ""
-                    cachedMLKitRects.clear()
-                    cachedMLKitTimestamp = 0L
-                }
-            }
-            
-            // --- INTEGRATION: ML KIT "JUDGE" (after validation) ---
-            if (cachedMLKitResult.isNotEmpty()) {
-                // Case A: ML Kit found 5 digits. It is the authority.
-                if (cachedMLKitResult.length == 5 || ReadingValidator.normalizeReading(cachedMLKitResult).length >= 4) {
-                    // 1. Confidence Boost (Instant Win)
-                    // If LeNet agrees with ML Kit (using NORMALIZED comparison!), we trust it 100% immediately.
-                    // "04525" == "4525" should be considered a match!
-                    if (ReadingValidator.areReadingsEquivalent(currentResult, cachedMLKitResult)) {
-                        // Use the formatted (5-digit with leading zeros) version
-                        val formattedResult = ReadingValidator.formatReading(currentResult)
-                        // We will handle this in the voting section by forcing history
-                        resultHistory.clear()
-                        repeat(historySize) { resultHistory.add(formattedResult) }
-                        // Cache results for voting
-                        cachedLenetResult = formattedResult
-                        cachedHybridResult = formattedResult
-                        
-                        // === SMART CONFIDENCE: Lock in immediately with max confidence ===
-                        lockedReading = formattedResult
-                        lockedFrameCount = historySize // Treat as if we've seen it many times
-                        currentConfidence = 100f
-                        lastSeenLockedTime = System.currentTimeMillis()
-                        
-                        // Record to predictor
-                        readingPredictor.recordObservation(formattedResult)
-                        
-                        // Mark as Hybrid success - both detectors agree = CERTAIN!
-                        Log.d("MeterAnalyzer", "LeNet+MLKit agree: emitting '$formattedResult' with 100% confidence")
-                        emitResult(formattedResult, 100f, allRects, acceptedRects, imageWidth, imageHeight, "H")
-                        mat.release()
-                        croppedMat.release()
-                        gray.release()
-                        binary.release()
-                        binaryThin.release()
-                        hierarchy.release()
-                        return
-                    }
-                    
-                    // 2. Override (Time's Up!)
-                    // If LeNet is struggling (taking too long) and ML Kit has a solid answer,
-                    // ML Kit takes over.
-                    // Reduced timeout to 1000ms (1s) to let ML Kit take over faster if LeNet struggles.
-                    val overrideTimeout = 1000L 
-                    val isTakingTooLong = firstGlimpseTime > 0 && (System.currentTimeMillis() - firstGlimpseTime) > overrideTimeout
-                    
-                    if (isTakingTooLong) {
-                        currentResult = cachedMLKitResult
-                        
-                        // ML Kit manipulates the Green Text (Visuals)
-                        // We replace the LeNet rects with the ML Kit rects
-                        allRects.clear()
-                        allRects.addAll(cachedMLKitRects)
-                        acceptedRects.clear()
-                        acceptedRects.addAll(cachedMLKitRects)
-                        
-                        // Force history to lock this result
-                        resultHistory.clear()
-                        repeat(historySize) { resultHistory.add(currentResult) }
-                        
-                        // === VOTING: Before accepting MLKit, cross-check with validation ===
-                        val votingResult = ReadingValidator.voteOnReading(
-                            lenetReading = cachedLenetResult,
-                            mlkitReading = cachedMLKitResult,
-                            hybridReading = cachedHybridResult,
-                            previousReading = previousReading
-                        )
-                        
-                        val finalReading = ReadingValidator.formatReading(votingResult.consensusReading ?: currentResult)
-                        val sourceTag = if (votingResult.agreementLevel == ReadingValidator.AgreementLevel.UNANIMOUS ||
-                                           votingResult.agreementLevel == ReadingValidator.AgreementLevel.MAJORITY) "V" else "M"
-                        
-                        // === SMART CONFIDENCE: Lock in the MLKit result ===
-                        // MLKit override means we're CONFIDENT in this result
-                        // Use at LEAST 90%, ignore validation penalty
-                        lockedReading = finalReading
-                        lockedFrameCount = historySize
-                        currentConfidence = Math.max(votingResult.confidence, 90f)
-                        lastSeenLockedTime = System.currentTimeMillis()
-                        
-                        // Record to predictor
-                        readingPredictor.recordObservation(finalReading)
-                        
-                        // Emit with HIGH confidence - MLKit saw it clearly!
-                        // Pass 95f directly to bypass any validation penalties
-                        Log.d("MeterAnalyzer", "MLKit override: emitting '$finalReading' with 95% confidence")
-                        emitResult(finalReading, 95f, allRects, acceptedRects, imageWidth, imageHeight, sourceTag)
-                        mat.release()
-                        croppedMat.release()
-                        gray.release()
-                        binary.release()
-                        binaryThin.release()
-                        hierarchy.release()
-                        return
-                    }
-                }
-                // Case B: ML Kit found 4 digits (Prefix).
-                // We trust ML Kit for the first 4, and LeNet for the 5th.
-                else if (cachedMLKitResult.length == 4 && currentResult.length == 5) {
-                    // Construct the Hybrid Result
-                    // Example: ML=0161, LeNet=02616 -> Result=01616
-                    val hybridResult = cachedMLKitResult + currentResult.last()
-                    
-                    // Cache for voting
-                    cachedHybridResult = hybridResult
-                    
-                    // We adopt this result immediately as the "Current Best Guess"
-                    // This corrects LeNet's prefix errors (e.g. 02616 -> 01616)
-                    currentResult = hybridResult
-                    
-                    // Note: We don't force an immediate "Override" return here because we want to 
-                    // let the history buffer fill up with this corrected result to ensure stability.
-                    // But if LeNet is unstable on the last digit, this might fluctuate.
-                    // That's acceptable/desired (we want to read the rolling digit).
-                }
-            }
-
-
-            // Track failures (relaxed definition of failure: anything less than 4 digits is suspicious for a 5-digit meter)
-            if (currentResult.length < 4) {
-                consecutiveFailures++
+            val finalSource = if (hasStrictFiveDigitEvidence) {
+                resolved.source
             } else {
-                consecutiveFailures = 0
+                bestRawCandidate?.source ?: "N"
             }
 
-            // --- FALLBACK: GOOGLE ML KIT (TROJAN HORSE) ---
-            // If OpenCV failed to find at least 3 digits, or found nothing, we call in the "Trojan Horse".
-            // Strategy: Use ML Kit to FIND the meter (Localization), but use LeNet to READ it (Classification).
-            // Trigger if:
-            // 1. Result is very poor (length < 3) - Immediate Trigger
-            // 2. Result is suspicious (length < 4) AND we've been failing for a while (consecutiveFailures > 10)
-            // 3. We don't have a cached result yet (if we do, we trust the background process instead of blocking here)
-            val shouldTriggerMLKit = (currentResult.length < 3 || (currentResult.length < 4 && consecutiveFailures > 10)) && image.image != null && cachedMLKitResult.isEmpty()
+            val mlKitDisplayText = buildEngineDisplayText(finalMlEngineResult)
+            val yoloDisplayText = "OFF"
 
-            if (shouldTriggerMLKit) {
-                try {
-                    val inputImage = InputImage.fromMediaImage(image.image!!, image.imageInfo.rotationDegrees)
-                    val mlKitTask = textRecognizer.process(inputImage)
-                    val mlKitResult = Tasks.await(mlKitTask) // Block since we are on background thread
-                    
-                    // Parse ML Kit result
-                    // Look for a block that resembles a meter reading (4-6 digits)
-                    for (block in mlKitResult.textBlocks) {
-                        val text = block.text.replace(" ", "").replace("\n", "")
-                        
-                        // Regex: Look for 4 to 6 consecutive digits
-                        if (text.matches(Regex("\\d{4,6}"))) {
-                            val androidBox = block.boundingBox
-                            if (androidBox != null) {
-                                // 1. Crop the meter area from the original image (mat is full RGB/ARGB)
-                                // Ensure box is within image bounds
-                                val safeBox = Rect(
-                                    Math.max(0, androidBox.left),
-                                    Math.max(0, androidBox.top),
-                                    Math.min(mat.cols() - androidBox.left, androidBox.width()),
-                                    Math.min(mat.rows() - androidBox.top, androidBox.height())
-                                )
-                                
-                                if (safeBox.width > 0 && safeBox.height > 0) {
-                                    val meterMatRGB = Mat(mat, safeBox)
-                                    val meterMatGray = Mat()
-                                    Imgproc.cvtColor(meterMatRGB, meterMatGray, Imgproc.COLOR_RGB2GRAY)
-                                    
-                                    // 2. Slice into 5 equal parts (Trojan Horse Strategy)
-                                    // We assume the box covers exactly the 5 digits.
-                                    val digitWidth = meterMatGray.cols() / 5
-                                    val digitHeight = meterMatGray.rows()
-                                    
-                                    val leNetBuilder = StringBuilder()
-                                    
-                                    // Update rects for UI visualization (Green Texts)
-                                    allRects.clear()
-                                    acceptedRects.clear()
+            val debugText = buildLiveDebugText(
+                mlEngineResult = finalMlEngineResult,
+                finalReading = finalReading,
+                finalConfidence = finalConfidence,
+                finalSource = finalSource,
+                hasStrictFiveDigitEvidence = hasStrictFiveDigitEvidence
+            )
 
-                                    for (i in 0 until 5) {
-                                        val digitRect = Rect(i * digitWidth, 0, digitWidth, digitHeight)
-                                        val digitMat = Mat(meterMatGray, digitRect)
-                                        
-                                        // 3. Feed to LeNet
-                                        // We reuse processMatForModel which handles resizing and thresholding
-                                        val digitBitmap = processMatForModel(digitMat, digitRect)
-                                        val digit = classifier.classify(digitBitmap)
-                                        
-                                        leNetBuilder.append(if (digit != -1) digit.toString() else "?")
-                                        
-                                        // Add the slice to acceptedRects so it shows up as a "Green Text" box
-                                        // Convert back to global coordinates
-                                        val globalSliceRect = Rect(
-                                            safeBox.x + digitRect.x,
-                                            safeBox.y + digitRect.y,
-                                            digitRect.width,
-                                            digitRect.height
-                                        )
-                                        acceptedRects.add(globalSliceRect)
-                                        allRects.add(globalSliceRect)
-
-                                        digitMat.release()
-                                    }
-                                    
-                                    currentResult = leNetBuilder.toString()
-                                    consecutiveFailures = 0 // Reset failures on success
-                                    
-                                    meterMatRGB.release()
-                                    meterMatGray.release()
-                                    break // Stop after first valid meter found
-                                }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("MeterAnalyzer", "ML Kit Fallback Failed", e)
-                }
-            }
+            val result = AnalyzerResult(
+                reading = finalReading,
+                confidence = finalConfidence,
+                allRects = finalRects,
+                acceptedRects = finalRects,
+                imageWidth = frameW,
+                imageHeight = frameH,
+                source = finalSource,
+                hasFreshEvidence = resolved.hasFreshEvidence,
+                validationResult = validation,
+                mlKitDisplayText = mlKitDisplayText,
+                paddleDisplayText = yoloDisplayText,
+                ocrDebug = debugText,
+                shouldSuggestManualInput = !resolved.hasFreshEvidence && !hasAnyOcrSignal && failureTracker.shouldSuggestManualInput()
+            )
+            onResult(result)
 
             if (captureDebugNextFrame) {
-                // Show toast with the captured result
-                val finalRes = currentResult
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    android.widget.Toast.makeText(context, "Captured: $finalRes", android.widget.Toast.LENGTH_LONG).show()
-                }
+                saveDebugImage(cropped, "debug_crop_${dateFormatter.format(Date())}.png")
                 captureDebugNextFrame = false
             }
-            
-            // === NORMALIZE the result before adding to history ===
-            // This ensures "04525" and "4525" are treated as the same reading!
-            val normalizedResult = if (currentResult.isNotEmpty()) {
-                ReadingValidator.formatReading(currentResult) // Converts to "04525" format
-            } else {
-                currentResult
-            }
-            
-            // === RECORD OBSERVATION TO PREDICTOR ===
-            // Every valid detection (3+ digits) gets recorded for prediction
-            if (normalizedResult.isNotEmpty() && normalizedResult.length >= 3) {
-                readingPredictor.recordObservation(normalizedResult)
-            }
-            // Also record MLKit and Hybrid if available
-            if (cachedMLKitResult.isNotEmpty() && cachedMLKitResult.length >= 3) {
-                readingPredictor.recordObservation(cachedMLKitResult)
-            }
-            if (cachedHybridResult.isNotEmpty() && cachedHybridResult.length >= 3) {
-                readingPredictor.recordObservation(cachedHybridResult)
-            }
-            
-            // Voting Logic - using NORMALIZED results
-            if (normalizedResult.isNotEmpty() && normalizedResult.length >= 3) { // Only consider results with at least 3 digits
-                resultHistory.addLast(normalizedResult)
-                if (resultHistory.size > historySize) {
-                    resultHistory.removeFirst()
-                }
-            } else {
-                // If we see nothing (or garbage) this frame, we should degrade confidence.
-                // If we see NOTHING (empty), clear history immediately to prevent "stuck" results.
-                if (normalizedResult.isEmpty()) {
-                    handleNoDetection()  // <-- RAPID RELEASE when camera sees nothing!
-                    resultHistory.clear()
-                }
-            }
-
-            // Calculate most frequent result using NORMALIZED comparison
-            if (resultHistory.isNotEmpty()) {
-                // Group by NORMALIZED value (so "04525", "4525", "004525" all count together)
-                val frequencyMap = resultHistory
-                    .groupingBy { ReadingValidator.normalizeReading(it) }
-                    .eachCount()
-                val mostFrequent = frequencyMap.maxByOrNull { it.value }
-                
-                if (mostFrequent != null) {
-                    // Format the result properly (with leading zeros)
-                    val formattedResult = ReadingValidator.formatReading(mostFrequent.key)
-                    
-                    // === SMART CONFIDENCE SYSTEM ===
-                    // Calculate base history agreement (old method)
-                    val historyAgreement = (mostFrequent.value.toFloat() / resultHistory.size) * 100
-                    
-                    // Calculate SMART confidence (with temporal persistence & momentum)
-                    var confidence = calculateSmartConfidence(formattedResult, historyAgreement)
-                    
-                    // Get the best reading (might be locked reading if we're confident)
-                    val bestReading = getBestReading(formattedResult)
-
-                    // --- 4-DIGIT TRAP ---
-                    // If we are stuck on 4 digits (e.g. 0161) and ML Kit isn't helping,
-                    // we must NOT submit this as a success. It's a partial read.
-                    // Check the NORMALIZED length (without leading zeros)
-                    val normalizedLength = ReadingValidator.normalizeReading(bestReading).length
-                    if (normalizedLength == 4 && ReadingValidator.normalizeReading(bestReading).toIntOrNull() ?: 0 >= 1000) {
-                        // It's actually a 4-digit number (1000-9999), not a 5-digit with leading zero
-                        // Cap confidence at 85% so it never triggers "Hold Steady" (which needs 90%)
-                        // This forces the user to keep adjusting until we find the 5th digit.
-                        confidence = Math.min(confidence, 85f)
-                    }
-                    
-                    // === DECISION ALGORITHM: FINAL VOTING ===
-                    // Cache the LeNet result for voting (use formatted version)
-                    cachedLenetResult = bestReading
-                    
-                    // If we have results from multiple detectors, vote before emitting
-                    var finalResult: String
-                    var finalSource: String
-                    var finalConfidence: Float
-                    
-                    if (cachedMLKitResult.isNotEmpty() || cachedHybridResult.isNotEmpty()) {
-                        val votingResult = ReadingValidator.voteOnReading(
-                            lenetReading = cachedLenetResult,
-                            mlkitReading = cachedMLKitResult,
-                            hybridReading = cachedHybridResult,
-                            previousReading = previousReading
-                        )
-                        
-                        if (votingResult.consensusReading != null) {
-                            finalResult = votingResult.consensusReading
-                            finalSource = when (votingResult.agreementLevel) {
-                                ReadingValidator.AgreementLevel.UNANIMOUS -> "V"  // Voted
-                                ReadingValidator.AgreementLevel.MAJORITY -> "V"
-                                ReadingValidator.AgreementLevel.PREFIX_MATCH -> "H" // Hybrid agreement
-                                else -> "L" // Fallback to LeNet
-                            }
-                            Log.d("MeterAnalyzer", "Voting result: ${votingResult.details}")
-                            
-                            // === SYNC LOCK WITH VOTED RESULT ===
-                            // If voting agrees with our lock, boost confidence
-                            // If voting gives different result, UPDATE the lock to match!
-                            if (ReadingValidator.areReadingsEquivalent(finalResult, lockedReading)) {
-                                // Voting confirmed our lock! We've seen this multiple times!
-                                lockedFrameCount++
-                                // After 2 frames of same reading, just go to 100%
-                                if (lockedFrameCount >= 2) {
-                                    currentConfidence = 100f
-                                } else {
-                                    currentConfidence = Math.min(100f, currentConfidence + 20f)
-                                }
-                            } else {
-                                // Voting chose something different - sync lock to voted result
-                                lockedReading = finalResult
-                                lockedFrameCount = 1
-                                lastSeenLockedTime = System.currentTimeMillis()
-                                // Start high if voting is unanimous
-                                if (votingResult.agreementLevel == ReadingValidator.AgreementLevel.UNANIMOUS) {
-                                    currentConfidence = 95f
-                                } else if (votingResult.agreementLevel == ReadingValidator.AgreementLevel.MAJORITY) {
-                                    currentConfidence = 90f
-                                } else {
-                                    currentConfidence = 85f
-                                }
-                            }
-                            
-                            // SIMPLE: Use current confidence (which grows with frames)
-                            finalConfidence = currentConfidence
-                        } else {
-                            finalResult = bestReading
-                            finalConfidence = confidence
-                            finalSource = "L"
-                        }
-                    } else {
-                        finalResult = bestReading
-                        finalConfidence = confidence
-                        finalSource = "L"
-                    }
-                    
-                    // === SIMPLE FINAL CHECK ===
-                    // If we've locked on this reading for 3+ frames, just go to 100%
-                    if (lockedFrameCount >= 3 && ReadingValidator.normalizeReading(finalResult) == ReadingValidator.normalizeReading(lockedReading)) {
-                        finalConfidence = 100f
-                        Log.d("MeterAnalyzer", "Lock override: seen '$finalResult' for $lockedFrameCount frames -> 100%")
-                    }
-                    
-                    // Log for debugging
-                    Log.d("MeterAnalyzer", "EMIT: locked='$lockedReading', frames=$lockedFrameCount, conf=$finalConfidence, result='$finalResult', src=$finalSource")
-
-                    emitResult(finalResult, finalConfidence, allRects, acceptedRects, imageWidth, imageHeight, finalSource)
-                }
-            } else {
-                 // Pass empty/current if no history yet - also handle decay
-                 if (normalizedResult.isNotEmpty()) {
-                     calculateSmartConfidence(normalizedResult, 0f)
-                 } else {
-                     // Nothing detected this frame - decay!
-                     handleNoDetection()
-                 }
-                 emitResult(normalizedResult, currentConfidence, allRects, acceptedRects, imageWidth, imageHeight, "L")
-            }
-
-            // Cleanup
-            mat.release()
-            croppedMat.release()
-            gray.release()
-            binary.release()
-            binaryThin.release() // Release the copy
-            hierarchy.release()
-            
         } catch (e: Exception) {
             Log.e("MeterAnalyzer", "Error analyzing image", e)
         } finally {
@@ -1484,55 +351,1015 @@ class MeterAnalyzer(
         }
     }
 
-    private fun processMatForModel(digitMat: Mat, rect: Rect): Bitmap {
-        // --- ROLLING DIGIT FIX ---
-        // Mechanical meters often show "halved" numbers (e.g., 5 going out, 6 coming in).
-        // To avoid confusion, we focus on the CENTER 60% of the vertical height.
-        // This cuts off the "leaving" digit at the top and "entering" digit at the bottom (or vice versa),
-        // focusing on the dominant digit in the window.
-        
-        val cropHeight = (digitMat.rows() * 0.60).toInt()
-        val cropY = (digitMat.rows() - cropHeight) / 2
-        val centerRect = Rect(0, cropY, digitMat.cols(), cropHeight)
-        val centerMat = Mat(digitMat, centerRect)
+    private fun buildMeterCropRect(width: Int, height: Int): Rect {
+        val leftN = guideBoxLeftN.coerceIn(0f, 1f)
+        val topN = guideBoxTopN.coerceIn(0f, 1f)
+        val rightN = guideBoxRightN.coerceIn((leftN + 0.02f).coerceAtMost(1f), 1f)
+        val bottomN = guideBoxBottomN.coerceIn((topN + 0.02f).coerceAtMost(1f), 1f)
 
-        // Resize to 28x28 with Padding (Center the digit)
-        // We use the cropped height for calculations now
-        val maxDim = Math.max(centerMat.cols(), centerMat.rows())
-        val squareMat = Mat.zeros(maxDim, maxDim, CvType.CV_8UC1)
+        var left = (leftN * width).roundToInt()
+        var top = (topN * height).roundToInt()
+        var right = (rightN * width).roundToInt()
+        var bottom = (bottomN * height).roundToInt()
 
-        val offsetX = (maxDim - centerMat.cols()) / 2
-        val offsetY = (maxDim - centerMat.rows()) / 2
-        val roi = Rect(offsetX, offsetY, centerMat.cols(), centerMat.rows())
-        
-        centerMat.copyTo(squareMat.submat(roi))
+        val baseW = (right - left).coerceAtLeast(1)
+        val baseH = (bottom - top).coerceAtLeast(1)
+        val insetX = (baseW * 0.04f).roundToInt().coerceAtLeast(1)
+        val insetY = (baseH * 0.06f).roundToInt().coerceAtLeast(1)
 
-        val resizedMat = Mat()
-        Imgproc.resize(squareMat, resizedMat, Size(20.0, 20.0), 0.0, 0.0, Imgproc.INTER_NEAREST)
+        left = (left + insetX).coerceAtMost(width - 1)
+        top = (top + insetY).coerceAtMost(height - 1)
+        right = (right - insetX).coerceIn(left + 1, width)
+        bottom = (bottom - insetY).coerceIn(top + 1, height)
 
-        val finalMat = Mat()
-        Core.copyMakeBorder(resizedMat, finalMat, 4, 4, 4, 4, Core.BORDER_CONSTANT, Scalar(0.0))
-        Imgproc.threshold(finalMat, finalMat, 127.0, 255.0, Imgproc.THRESH_BINARY)
+        val safeW = (right - left).coerceAtLeast(1)
+        val safeH = (bottom - top).coerceAtLeast(1)
+        return Rect(left, top, safeW, safeH)
+    }
 
-        // Ensure digits remain white on black background
-        // REMOVED: Auto-inversion logic was flipping thick digits (mean > 127) causing low confidence
-        // val meanIntensity = Core.mean(finalMat).`val`[0]
-        // if (meanIntensity > 127) {
-        //    Core.bitwise_not(finalMat, finalMat)
-        // }
+    private fun maskOutsideGuideBox(frame: Bitmap, cropRect: Rect): Bitmap {
+        val out = Bitmap.createBitmap(frame.width, frame.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        canvas.drawColor(Color.BLACK)
 
-        val digitBitmap = Bitmap.createBitmap(28, 28, Bitmap.Config.ARGB_8888)
-        Utils.matToBitmap(finalMat, digitBitmap)
-        
-        // centerMat is a submat, no need to release explicitly if we release parent, 
-        // but here digitMat is passed in. centerMat header needs release? 
-        // Actually Mat(Mat, Rect) creates a header. 
-        centerMat.release()
-        squareMat.release()
-        resizedMat.release()
-        finalMat.release()
-        
-        return digitBitmap
+        val src = AndroidRect(
+            cropRect.x,
+            cropRect.y,
+            cropRect.x + cropRect.width,
+            cropRect.y + cropRect.height
+        )
+        canvas.drawBitmap(frame, src, src, null)
+        return out
+    }
+
+    private fun maskInsideGuideCrop(cropped: Bitmap, verticalShiftN: Float): Bitmap {
+        val out = Bitmap.createBitmap(cropped.width, cropped.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        canvas.drawColor(Color.BLACK)
+
+        val insetX = (cropped.width * 0.04f).roundToInt().coerceAtLeast(0)
+        val baseTop = (cropped.height * 0.16f).roundToInt()
+        val baseBottom = (cropped.height * 0.94f).roundToInt()
+        val shiftPx = (cropped.height * verticalShiftN).roundToInt()
+
+        val bandTop = (baseTop + shiftPx).coerceIn(0, cropped.height - 1)
+        var bandBottom = (baseBottom + shiftPx).coerceIn(bandTop + 1, cropped.height)
+        if ((bandBottom - bandTop) < (cropped.height * 0.45f).roundToInt()) {
+            bandBottom = (bandTop + (cropped.height * 0.45f).roundToInt()).coerceAtMost(cropped.height)
+        }
+
+        val left = insetX
+        val right = (cropped.width - insetX).coerceAtLeast(left + 1)
+        val src = AndroidRect(left, bandTop, right, bandBottom)
+        val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+        canvas.drawBitmap(cropped, src, src, paint)
+        return out
+    }
+
+    private fun runMlKitPipeline(
+        cropped: Bitmap,
+        cropRect: Rect,
+        pass: String,
+        includeThresholdVariant: Boolean,
+        allowSlotFallback: Boolean
+    ): OcrEngineResult {
+        return runMlKit(
+            cropped = cropped,
+            cropRect = cropRect,
+            pass = pass,
+            includeThresholdVariant = includeThresholdVariant,
+            allowSlotFallback = allowSlotFallback
+        )
+    }
+
+    private fun runCutoffRecovery(cropped: Bitmap, cropRect: Rect, now: Long): OcrEngineResult? {
+        if (now - lastCutoffRecoveryMs < cutoffRecoveryCooldownMs) return null
+        lastCutoffRecoveryMs = now
+
+        val shifts = floatArrayOf(-0.10f, 0.10f, -0.18f, 0.18f)
+        var best: OcrEngineResult? = null
+
+        for (shift in shifts) {
+            val shifted = maskInsideGuideCrop(cropped, shift)
+            val result = runMlKitPipeline(
+                cropped = shifted,
+                cropRect = cropRect,
+                pass = if (shift < 0f) "CUT-U" else "CUT-D",
+                includeThresholdVariant = false,
+                allowSlotFallback = false
+            )
+
+            if (best == null || scoreEngine(result.candidate) > scoreEngine(best?.candidate)) {
+                best = result
+            }
+
+            shifted.recycle()
+        }
+
+        return best
+    }
+
+    private fun runMlKit(
+        cropped: Bitmap,
+        cropRect: Rect,
+        pass: String,
+        includeThresholdVariant: Boolean,
+        allowSlotFallback: Boolean
+    ): OcrEngineResult {
+        return try {
+            val variants = buildMlKitVariants(cropped, includeThresholdVariant)
+            val aggregateTokens = ArrayList<DigitToken>()
+
+            var debugRaw = ""
+            var bestVariantTag = "RAW"
+            var bestDigits = ""
+            var bestBox: AndroidRect? = null
+            var bestScore = Float.NEGATIVE_INFINITY
+
+            for (variant in variants) {
+                val input = InputImage.fromBitmap(variant.bitmap, 0)
+                val result = Tasks.await(textRecognizer.process(input))
+                val rawText = result.text ?: ""
+                if (debugRaw.isBlank() && rawText.isNotBlank()) {
+                    debugRaw = "${variant.tag}:${compactForDebug(rawText)}"
+                }
+
+                val scaleX = cropped.width.toFloat() / variant.bitmap.width.toFloat().coerceAtLeast(1f)
+                val scaleY = cropped.height.toFloat() / variant.bitmap.height.toFloat().coerceAtLeast(1f)
+
+                val candidates = mutableListOf<Pair<String, AndroidRect?>>()
+                if (rawText.isNotBlank()) {
+                    candidates.add(rawText to null)
+                }
+                for (block in result.textBlocks) {
+                    candidates.add(block.text to block.boundingBox)
+                    for (line in block.lines) {
+                        candidates.add(line.text to (line.boundingBox ?: block.boundingBox))
+                        for (element in line.elements) {
+                            candidates.add(element.text to (element.boundingBox ?: line.boundingBox ?: block.boundingBox))
+                        }
+                    }
+                }
+
+                for ((text, box) in candidates) {
+                    if (box != null) {
+                        val mappedBox = scaleRect(box, scaleX, scaleY, cropped.width, cropped.height)
+                        aggregateTokens.addAll(
+                            extractDigitTokensFromBox(
+                                text = text,
+                                mappedBox = mappedBox,
+                                cropRect = cropRect,
+                                source = "M",
+                                weight = 1.0f
+                            )
+                        )
+                    }
+
+                    val digits = extractDigitCandidate(text) ?: continue
+                    val mappedBox = box?.let { scaleRect(it, scaleX, scaleY, cropped.width, cropped.height) }
+                    val score = candidateScore(digits.length, mappedBox != null)
+                    if (score > bestScore) {
+                        bestScore = score
+                        bestDigits = digits
+                        bestBox = mappedBox
+                        bestVariantTag = variant.tag
+                    }
+                }
+            }
+
+            if (bestDigits.isEmpty() && allowSlotFallback) {
+                val slotFallback = runMlKitSlotFallback(cropped, cropRect, pass)
+                if (slotFallback != null) {
+                    return slotFallback
+                }
+            }
+
+            if (bestDigits.isEmpty()) {
+                return OcrEngineResult(
+                    candidate = null,
+                    rawText = if (debugRaw.isBlank()) "" else debugRaw,
+                    digits = "",
+                    pass = pass,
+                    tokens = aggregateTokens
+                )
+            }
+
+            val rects = splitIntoSlotRects(bestBox, bestDigits.length, cropped.width, cropped.height, cropRect)
+            val confidence = when (bestDigits.length) {
+                5 -> 95f
+                4 -> 80f
+                else -> 65f
+            }
+
+            OcrEngineResult(
+                candidate = OcrCandidate(bestDigits, confidence, rects, "M"),
+                rawText = if (debugRaw.isBlank()) bestVariantTag else debugRaw,
+                digits = bestDigits,
+                pass = pass,
+                tokens = aggregateTokens
+            )
+        } catch (e: Exception) {
+            Log.d("MeterAnalyzer", "ML Kit candidate failed", e)
+            OcrEngineResult(
+                candidate = null,
+                rawText = "ERR",
+                digits = "",
+                pass = pass
+            )
+        }
+    }
+
+    private fun runMlKitSlotFallback(cropped: Bitmap, cropRect: Rect, pass: String): OcrEngineResult? {
+        if (cropped.width <= 0 || cropped.height <= 0) return null
+
+        val stripLeft = (cropped.width * 0.14f).toInt().coerceAtLeast(0)
+        val stripTop = (cropped.height * 0.38f).toInt().coerceAtLeast(0)
+        val stripWidth = (cropped.width * 0.72f).toInt().coerceAtLeast(1)
+            .coerceAtMost(cropped.width - stripLeft)
+        val stripHeight = (cropped.height * 0.48f).toInt().coerceAtLeast(1)
+            .coerceAtMost(cropped.height - stripTop)
+
+        if (stripWidth <= 5 || stripHeight <= 5) return null
+
+        val slotW = (stripWidth / 5).coerceAtLeast(1)
+        val digitsBySlot = Array<Char?>(5) { null }
+
+        for (i in 0 until 5) {
+            val localX = stripLeft + i * slotW
+            val localW = if (i == 4) (stripLeft + stripWidth) - localX else slotW
+            if (localW <= 0) continue
+
+            val slotBitmap = Bitmap.createBitmap(cropped, localX, stripTop, localW, stripHeight)
+            val variants = buildMlKitVariants(slotBitmap, includeThresholdVariant = false)
+
+            for (variant in variants) {
+                try {
+                    val input = InputImage.fromBitmap(variant.bitmap, 0)
+                    val result = Tasks.await(textRecognizer.process(input))
+                    val digit = extractSingleDigitCandidate(result.text ?: "")
+                    if (digit != null) {
+                        digitsBySlot[i] = digit
+                        break
+                    }
+                } catch (e: Exception) {
+                    Log.d("MeterAnalyzer", "Slot OCR failed", e)
+                }
+            }
+
+            slotBitmap.recycle()
+        }
+
+        val known = digitsBySlot.filterNotNull()
+        if (known.size < 4) return null
+
+        val reading = known.joinToString(separator = "")
+        val slotRects = ArrayList<Rect>(5)
+        for (i in 0 until 5) {
+            val localX = stripLeft + i * slotW
+            val localW = if (i == 4) (stripLeft + stripWidth) - localX else slotW
+            if (localW <= 0) continue
+            slotRects.add(Rect(cropRect.x + localX, cropRect.y + stripTop, localW, stripHeight))
+        }
+
+        val confidence = if (known.size == 5) 92f else 75f
+        val raw = "SLOT:${digitsBySlot.joinToString(separator = "") { it?.toString() ?: "_" }}"
+        val tokens = buildTokensFromSlotData(digitsBySlot, slotRects, "M", 1.3f)
+
+        return OcrEngineResult(
+            candidate = OcrCandidate(reading, confidence, slotRects, "M"),
+            rawText = raw,
+            digits = reading,
+            pass = pass,
+            tokens = tokens
+        )
+    }
+
+    private fun buildAlignedFiveDigitCandidate(tokens: List<DigitToken>): OcrCandidate? {
+        val digitTokens = tokens
+            .filter { it.digit.isDigit() && it.rect.width > 0 && it.rect.height > 0 }
+            .sortedBy { centerY(it.rect) }
+
+        if (digitTokens.size < 5) return null
+
+        val yGroups = mutableListOf<MutableList<DigitToken>>()
+        for (token in digitTokens) {
+            val y = centerY(token.rect)
+            var bestGroup: MutableList<DigitToken>? = null
+            var bestDelta = Float.MAX_VALUE
+
+            for (group in yGroups) {
+                val meanY = group.map { centerY(it.rect) }.average().toFloat()
+                val avgH = group.map { it.rect.height.toFloat() }.average().toFloat().coerceAtLeast(1f)
+                val tolerance = maxOf(8f, avgH * 0.55f)
+                val delta = abs(y - meanY)
+                if (delta <= tolerance && delta < bestDelta) {
+                    bestGroup = group
+                    bestDelta = delta
+                }
+            }
+
+            if (bestGroup == null) {
+                yGroups.add(mutableListOf(token))
+            } else {
+                bestGroup.add(token)
+            }
+        }
+
+        var best: OcrCandidate? = null
+        var bestScore = Float.NEGATIVE_INFINITY
+
+        for (group in yGroups) {
+            val dedup = dedupeTokensByX(group)
+            if (dedup.size < 5) continue
+
+            for (start in 0..(dedup.size - 5)) {
+                val window = dedup.subList(start, start + 5)
+                val xCenters = window.map { centerX(it.rect) }
+                var monotonic = true
+                for (i in 1 until xCenters.size) {
+                    if (xCenters[i] <= xCenters[i - 1]) {
+                        monotonic = false
+                        break
+                    }
+                }
+                if (!monotonic) continue
+
+                val gaps = (1 until xCenters.size).map { xCenters[it] - xCenters[it - 1] }
+                if (gaps.any { it <= 1f }) continue
+
+                val avgGap = gaps.average().toFloat().coerceAtLeast(1f)
+                val variance = gaps.map { gap ->
+                    val d = gap - avgGap
+                    d * d
+                }.average().toFloat()
+                val normVar = variance / (avgGap * avgGap + 1f)
+                val gapBalance = (1f / (1f + normVar)).coerceIn(0f, 1f)
+
+                val yCenters = window.map { centerY(it.rect) }
+                val ySpread = (yCenters.maxOrNull() ?: 0f) - (yCenters.minOrNull() ?: 0f)
+                val avgHeight = window.map { it.rect.height.toFloat() }.average().toFloat().coerceAtLeast(1f)
+                val lineTightness = (1f - (ySpread / (avgHeight * 1.1f))).coerceIn(0f, 1f)
+
+                val avgWeight = window.map { it.weight }.average().toFloat()
+                val score = gapBalance * 220f + lineTightness * 130f + avgWeight * 25f
+
+                if (score > bestScore) {
+                    val reading = window.joinToString(separator = "") { it.digit.toString() }
+                    val rects = window.map { it.rect }
+                    val confidence = (60f + gapBalance * 25f + lineTightness * 10f + avgWeight * 4f)
+                        .coerceIn(55f, 97f)
+
+                    best = OcrCandidate(
+                        reading = reading,
+                        confidence = confidence,
+                        slotRects = rects,
+                        source = "G"
+                    )
+                    bestScore = score
+                }
+            }
+        }
+
+        return best
+    }
+
+    private fun dedupeTokensByX(tokens: List<DigitToken>): List<DigitToken> {
+        if (tokens.isEmpty()) return emptyList()
+
+        val sorted = tokens.sortedBy { centerX(it.rect) }
+        val out = mutableListOf<DigitToken>()
+
+        for (token in sorted) {
+            if (out.isEmpty()) {
+                out.add(token)
+                continue
+            }
+
+            val last = out.last()
+            val xDelta = abs(centerX(token.rect) - centerX(last.rect))
+            val widthTol = minOf(last.rect.width, token.rect.width).toFloat() * 0.55f
+            val tolerance = maxOf(4f, widthTol)
+
+            if (xDelta <= tolerance) {
+                val lastScore = last.weight + (last.rect.width * last.rect.height) * 0.001f
+                val tokenScore = token.weight + (token.rect.width * token.rect.height) * 0.001f
+                if (tokenScore > lastScore) {
+                    out[out.lastIndex] = token
+                }
+            } else {
+                out.add(token)
+            }
+        }
+
+        return out
+    }
+
+    private fun extractDigitTokensFromBox(
+        text: String,
+        mappedBox: AndroidRect,
+        cropRect: Rect,
+        source: String,
+        weight: Float
+    ): List<DigitToken> {
+        val digits = normalizeDigitsLoose(text)
+        if (digits.isEmpty()) return emptyList()
+
+        val left = mappedBox.left
+        val top = mappedBox.top
+        val right = mappedBox.right.coerceAtLeast(left + digits.length)
+        val bottom = mappedBox.bottom.coerceAtLeast(top + 1)
+
+        val width = (right - left).coerceAtLeast(digits.length)
+        val height = (bottom - top).coerceAtLeast(1)
+        val slotW = (width / digits.length).coerceAtLeast(1)
+
+        val tokens = ArrayList<DigitToken>(digits.length)
+        for (i in digits.indices) {
+            val localX = left + i * slotW
+            val localW = if (i == digits.lastIndex) right - localX else slotW
+            if (localW <= 0) continue
+
+            val rect = Rect(cropRect.x + localX, cropRect.y + top, localW, height)
+            tokens.add(DigitToken(digits[i], rect, source, weight))
+        }
+
+        return tokens
+    }
+
+    private fun buildTokensFromReading(
+        reading: String,
+        rects: List<Rect>,
+        source: String,
+        weight: Float
+    ): List<DigitToken> {
+        val digits = normalizeDigitsLoose(reading)
+        if (digits.isEmpty() || rects.isEmpty()) return emptyList()
+
+        val tokens = ArrayList<DigitToken>(digits.length)
+        for (i in digits.indices) {
+            val rect = if (i < rects.size) rects[i] else rects.last()
+            tokens.add(DigitToken(digits[i], rect, source, weight))
+        }
+        return tokens
+    }
+
+    private fun buildTokensFromSlotData(
+        digitsBySlot: Array<Char?>,
+        slotRects: List<Rect>,
+        source: String,
+        weight: Float
+    ): List<DigitToken> {
+        val tokens = ArrayList<DigitToken>()
+        val limit = minOf(digitsBySlot.size, slotRects.size)
+
+        for (i in 0 until limit) {
+            val digit = digitsBySlot[i] ?: continue
+            if (!digit.isDigit()) continue
+            tokens.add(DigitToken(digit, slotRects[i], source, weight))
+        }
+
+        return tokens
+    }
+
+    private fun buildTokenRectsForReading(reading: String, cropRect: Rect): List<Rect> {
+        val digits = normalizeDigitsLoose(reading)
+        if (digits.isEmpty()) return emptyList()
+
+        val slots = digits.length
+        val slotW = (cropRect.width / slots).coerceAtLeast(1)
+        val rects = ArrayList<Rect>(slots)
+
+        for (i in 0 until slots) {
+            val x = cropRect.x + i * slotW
+            val w = if (i == slots - 1) cropRect.width - (slotW * i) else slotW
+            rects.add(Rect(x, cropRect.y, w, cropRect.height))
+        }
+
+        return rects
+    }
+
+    private fun normalizeDigitsLoose(text: String): String {
+        if (text.isBlank()) return ""
+        return text.uppercase(Locale.US)
+            .replace('O', '0')
+            .replace('Q', '0')
+            .replace('D', '0')
+            .replace('I', '1')
+            .replace('L', '1')
+            .replace('S', '5')
+            .replace('B', '8')
+            .filter { it.isDigit() }
+    }
+
+    private fun centerX(rect: Rect): Float = rect.x + (rect.width / 2f)
+
+    private fun centerY(rect: Rect): Float = rect.y + (rect.height / 2f)
+
+    private fun buildLiveDebugText(
+        mlEngineResult: OcrEngineResult,
+        finalReading: String,
+        finalConfidence: Float,
+        finalSource: String,
+        hasStrictFiveDigitEvidence: Boolean
+    ): String {
+        val pick = compactForDebug(finalReading)
+        val fiveState = if (hasStrictFiveDigitEvidence) "Y" else "N"
+        val mlPass = mlEngineResult.pass
+        val tokenCount = mlEngineResult.tokens.size
+        val lb = String.format("%05d", lastLowerLimit.coerceAtLeast(0))
+        val ub = String.format("%05d", lastUpperLimit.coerceAtLeast(lastLowerLimit + 1))
+        val pred = compactForDebug(lastPredictiveReading)
+
+        return "DBG PAR:M ML:$mlPass TK:$tokenCount LB:$lb UB:$ub PR:$pred PICK:$pick ${finalConfidence.toInt()}% SRC:$finalSource 5D:$fiveState"
+    }
+
+    private fun needsFallback(result: OcrEngineResult): Boolean {
+        val candidate = result.candidate ?: return true
+        return candidate.reading.length < 4
+    }
+
+    private fun chooseBetterEngineResult(primary: OcrEngineResult, fallback: OcrEngineResult): OcrEngineResult {
+        val primaryScore = scoreEngine(primary.candidate)
+        val fallbackScore = scoreEngine(fallback.candidate)
+
+        return when {
+            fallbackScore > primaryScore -> fallback
+            primaryScore > fallbackScore -> primary
+            fallback.digits.length > primary.digits.length -> fallback
+            primary.rawText.isBlank() && fallback.rawText.isNotBlank() -> fallback
+            else -> primary
+        }
+    }
+
+    private fun scoreEngine(candidate: OcrCandidate?): Float {
+        if (candidate == null) return -1f
+        return (candidate.reading.length * 100f) + candidate.confidence
+    }
+
+    private fun buildMlKitVariants(source: Bitmap, includeThresholdVariant: Boolean): List<MlKitVariant> {
+        val variants = mutableListOf<MlKitVariant>()
+        variants.add(MlKitVariant(source, "RAW"))
+
+        if (includeThresholdVariant) {
+            val threshold = buildThresholdVariant(source)
+            if (threshold != null) {
+                variants.add(MlKitVariant(threshold, "THR"))
+            }
+        }
+
+        return variants
+    }
+
+    private fun buildThresholdVariant(source: Bitmap): Bitmap? {
+        val src = Mat()
+        val gray = Mat()
+        val blur = Mat()
+        val thr = Mat()
+        val rgba = Mat()
+        return try {
+            Utils.bitmapToMat(source, src)
+            Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY)
+            Imgproc.GaussianBlur(gray, blur, Size(3.0, 3.0), 0.0)
+            Imgproc.adaptiveThreshold(
+                blur,
+                thr,
+                255.0,
+                Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
+                Imgproc.THRESH_BINARY,
+                35,
+                7.0
+            )
+            Imgproc.cvtColor(thr, rgba, Imgproc.COLOR_GRAY2RGBA)
+
+            val out = Bitmap.createBitmap(rgba.cols(), rgba.rows(), Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(rgba, out)
+            out
+        } catch (e: Exception) {
+            Log.d("MeterAnalyzer", "Threshold variant failed", e)
+            null
+        } finally {
+            src.release()
+            gray.release()
+            blur.release()
+            thr.release()
+            rgba.release()
+        }
+    }
+
+    private fun scaleRect(box: AndroidRect, scaleX: Float, scaleY: Float, maxW: Int, maxH: Int): AndroidRect {
+        val left = (box.left * scaleX).toInt().coerceIn(0, maxW - 1)
+        val top = (box.top * scaleY).toInt().coerceIn(0, maxH - 1)
+        val right = (box.right * scaleX).toInt().coerceIn(left + 1, maxW)
+        val bottom = (box.bottom * scaleY).toInt().coerceIn(top + 1, maxH)
+        return AndroidRect(left, top, right, bottom)
+    }
+
+    private fun extractSingleDigitCandidate(text: String): Char? {
+        if (text.isBlank()) return null
+
+        val normalized = text.uppercase(Locale.US)
+            .replace('O', '0')
+            .replace('Q', '0')
+            .replace('D', '0')
+            .replace('I', '1')
+            .replace('L', '1')
+            .replace('S', '5')
+            .replace('B', '8')
+
+        return normalized.firstOrNull { it.isDigit() }
+    }
+
+    private fun buildEngineDisplayText(result: OcrEngineResult): String {
+        return when {
+            result.digits.isNotBlank() -> compactForDebug(result.digits)
+            result.rawText == "NOT_INIT" -> "NOT_INIT"
+            result.rawText == "ERR" -> "ERR"
+            result.rawText.isBlank() -> "-"
+            else -> compactForDebug(result.rawText)
+        }
+    }
+
+    private fun compactForDebug(value: String): String {
+        val compact = value.replace("\\s+".toRegex(), "")
+        if (compact.isBlank()) return "-"
+        return if (compact.length <= 18) compact else compact.take(18)
+    }
+
+    private fun resolveFinalReading(candidates: List<OcrCandidate>): ResolvedReading {
+        if (candidates.isEmpty()) {
+            return resolveFromPredictionOnly()
+        }
+
+        val lowerLimit = computeLowerLimit()
+        val upperLimit = computeUpperLimit(lowerLimit)
+        val strongestObservedDigits = candidates.maxOfOrNull { normalizeDigitsLoose(it.reading).length } ?: 0
+
+        val completed = candidates.mapNotNull { candidate ->
+            val completedReading = completeReading(candidate.reading, lowerLimit, upperLimit)
+            val value = completedReading.toIntOrNull() ?: return@mapNotNull null
+            if (value < lowerLimit || value > upperLimit) return@mapNotNull null
+            candidate.copy(reading = completedReading)
+        }
+
+        if (completed.isEmpty()) {
+            val predicted = predictReadingWithinBounds(lowerLimit, upperLimit, lowerLimit)
+            return if (predicted.isBlank()) {
+                ResolvedReading("", 0f, emptyList(), "N", false)
+            } else {
+                ResolvedReading(predicted, 62f, emptyList(), "X", strongestObservedDigits >= 4)
+            }
+        }
+
+        val slotVotes = Array(5) { mutableMapOf<Char, Float>() }
+        completed.forEach { candidate ->
+            val padded = candidate.reading.padStart(5, '0').takeLast(5)
+            padded.forEachIndexed { index, ch ->
+                if (ch in '0'..'9') {
+                    slotVotes[index][ch] = (slotVotes[index][ch] ?: 0f) + candidate.confidence
+                }
+            }
+        }
+
+        // Add a light history prior to stabilize partially unreadable slots.
+        readingHistory.lastOrNull()?.padStart(5, '0')?.takeLast(5)?.forEachIndexed { index, ch ->
+            slotVotes[index][ch] = (slotVotes[index][ch] ?: 0f) + 20f
+        }
+
+        val winner = StringBuilder()
+        val slotConf = mutableListOf<Float>()
+        for (i in 0 until 5) {
+            val total = slotVotes[i].values.sum().coerceAtLeast(1f)
+            val best = slotVotes[i].maxByOrNull { it.value }
+            winner.append(best?.key ?: '0')
+            slotConf.add(((best?.value ?: 0f) / total) * 100f)
+        }
+
+        var resolvedReading = winner.toString()
+        resolvedReading = enforceRolloverAwareChoice(
+            primary = resolvedReading,
+            alternatives = completed.map { it.reading },
+            lowerLimit = lowerLimit,
+            upperLimit = upperLimit
+        )
+
+        val resolvedValue = resolvedReading.toIntOrNull()
+        if (resolvedValue == null || resolvedValue < lowerLimit || resolvedValue > upperLimit) {
+            resolvedReading = predictReadingWithinBounds(
+                lowerLimit = lowerLimit,
+                upperLimit = upperLimit,
+                fallbackValue = lowerLimit
+            )
+        }
+
+        val rangeWidth = (upperLimit - lowerLimit).coerceAtLeast(1)
+        val rangePenalty = (rangeWidth / 25f).coerceAtMost(20f)
+        val avgConf = (slotConf.average().toFloat() - rangePenalty).coerceIn(45f, 97f)
+
+        val source = when {
+            completed.size >= 2 && completed.map { it.reading }.distinct().size == 1 -> "V"
+            completed.any { it.source == "Y" } && completed.any { it.source == "M" } -> "V"
+            completed.any { it.source == "G" } && completed.any { it.source == "Y" || it.source == "M" } -> "V"
+            completed.any { it.source == "Y" } -> "Y"
+            completed.any { it.source == "G" } -> "G"
+            else -> "M"
+        }
+
+        val rects = completed.maxByOrNull { it.confidence }?.slotRects ?: emptyList()
+        return ResolvedReading(resolvedReading, avgConf, rects, source, strongestObservedDigits >= 4)
+    }
+
+    private fun resolveFromPredictionOnly(): ResolvedReading {
+        val lowerLimit = computeLowerLimit()
+        val upperLimit = computeUpperLimit(lowerLimit)
+        val predicted = predictReadingWithinBounds(lowerLimit, upperLimit, lowerLimit)
+        return if (predicted.isBlank()) {
+            ResolvedReading("", 0f, emptyList(), "N", false)
+        } else {
+            ResolvedReading(predicted, 55f, emptyList(), "X", false)
+        }
+    }
+
+    private fun computeLowerLimit(): Int {
+        if (previousReading > 0) {
+            return previousReading.coerceIn(0, ReadingValidator.MAX_READING_VALUE)
+        }
+        val historyFloor = readingHistory.lastOrNull()?.toIntOrNull() ?: 0
+        return historyFloor.coerceIn(0, ReadingValidator.MAX_READING_VALUE)
+    }
+
+    private fun computeUpperLimit(lowerLimit: Int): Int {
+        val computedUpper = computePredictedUpper(lowerLimit)
+
+        lastLowerLimit = lowerLimit
+        lastUpperLimit = computedUpper
+
+        return computedUpper
+    }
+
+    private fun computePredictedUpper(lowerLimit: Int): Int {
+        val linearProjection = computeLinearProjection(lowerLimit)
+        val prediction = readingPredictor.predict(previousReading)
+        val predictiveValue = prediction.predictedReading.toIntOrNull()
+        val lastValue = readingHistory.lastOrNull()?.toIntOrNull() ?: lowerLimit
+        val avgStep = estimateAverageStep()
+        val stepProjection = (lastValue + avgStep).coerceAtLeast(lowerLimit)
+
+        val hardUpper = (lowerLimit + ReadingValidator.MAX_MONTHLY_USAGE)
+            .coerceAtMost(ReadingValidator.MAX_READING_VALUE)
+
+        val candidates = mutableListOf<Int>()
+        if (predictiveValue != null) candidates.add(predictiveValue)
+        candidates.add(linearProjection)
+        candidates.add(stepProjection)
+        candidates.add(lowerLimit)
+
+        val boundedCandidates = candidates
+            .map { it.coerceIn(lowerLimit, hardUpper) }
+            .sorted()
+
+        val medianPrediction = boundedCandidates[boundedCandidates.size / 2]
+        val computedUpper = medianPrediction.coerceIn(lowerLimit, hardUpper)
+
+        lastPredictiveReading = if (prediction.predictedReading.isBlank()) {
+            String.format("%05d", computedUpper)
+        } else {
+            prediction.predictedReading
+        }
+
+        return computedUpper
+    }
+
+    private fun computeLinearProjection(lowerLimit: Int): Int {
+        val values = readingHistory.toList().mapNotNull { it.toIntOrNull() }.takeLast(8)
+        if (values.isEmpty()) return lowerLimit
+        if (values.size == 1) return maxOf(lowerLimit, values.last())
+
+        val n = values.size.toFloat()
+        var sumX = 0f
+        var sumY = 0f
+        var sumXY = 0f
+        var sumX2 = 0f
+
+        values.forEachIndexed { index, value ->
+            val x = index.toFloat()
+            val y = value.toFloat()
+            sumX += x
+            sumY += y
+            sumXY += x * y
+            sumX2 += x * x
+        }
+
+        val denominator = (n * sumX2) - (sumX * sumX)
+        val slope = if (abs(denominator) < 1e-5f) 0f else ((n * sumXY) - (sumX * sumY)) / denominator
+        val intercept = (sumY - (slope * sumX)) / n
+        val projected = (intercept + (slope * values.size.toFloat())).roundToInt()
+        return projected.coerceAtLeast(lowerLimit)
+    }
+
+    private fun estimateAverageStep(): Int {
+        val values = readingHistory.toList().mapNotNull { it.toIntOrNull() }.takeLast(8)
+        if (values.size < 2) return 0
+
+        val deltas = values.zipWithNext()
+            .map { (previous, current) -> (current - previous).coerceAtLeast(0) }
+
+        if (deltas.isEmpty()) return 0
+        return deltas.average().roundToInt()
+    }
+
+    private fun predictReadingWithinBounds(lowerLimit: Int, upperLimit: Int, fallbackValue: Int): String {
+        val prediction = readingPredictor.predict(previousReading)
+        val ranked = mutableListOf<Pair<Int, Float>>()
+
+        prediction.predictedReading.toIntOrNull()?.let { ranked.add(it to (prediction.confidence + 20f)) }
+        prediction.alternativeCandidates.forEach { (candidate, score) ->
+            candidate.toIntOrNull()?.let { ranked.add(it to score) }
+        }
+        readingHistory.lastOrNull()?.toIntOrNull()?.let { ranked.add(it to 30f) }
+        ranked.add(fallbackValue to 10f)
+
+        val boundedRanked = ranked.map { (value, score) ->
+            value.coerceIn(lowerLimit, upperLimit) to score
+        }
+
+        val chosen = boundedRanked.maxByOrNull { it.second }?.first ?: lowerLimit
+        return String.format("%05d", chosen.coerceIn(lowerLimit, upperLimit))
+    }
+
+    private fun completeReading(raw: String, lowerLimit: Int, upperLimit: Int): String {
+        val digitsOnly = raw.filter { it.isDigit() }
+        val predicted = predictReadingWithinBounds(lowerLimit, upperLimit, lowerLimit)
+        if (digitsOnly.isEmpty()) return predicted
+        if (digitsOnly.length >= 5) {
+            val direct = digitsOnly.takeLast(5).toIntOrNull() ?: lowerLimit
+            return String.format("%05d", direct.coerceIn(lowerLimit, upperLimit))
+        }
+
+        // For partial reads, fill unknown slots from prediction first (fast path).
+        val patterns = mutableListOf<String>()
+        if (digitsOnly.length == 4) {
+            for (i in 0..4) {
+                val p = StringBuilder(digitsOnly)
+                p.insert(i, '?')
+                patterns.add(p.toString())
+            }
+        } else {
+            patterns.add(digitsOnly.padStart(5, '?').takeLast(5))
+        }
+
+        val predictionDigits = predicted.toCharArray()
+        val predictedValue = predicted.toIntOrNull() ?: lowerLimit
+        var bestReading = predicted
+        var bestScore = Float.NEGATIVE_INFINITY
+
+        for (pattern in patterns) {
+            val candidateChars = pattern.toCharArray()
+            candidateChars.forEachIndexed { idx, ch ->
+                if (ch == '?') {
+                    candidateChars[idx] = predictionDigits[idx]
+                }
+            }
+
+            val candidate = String(candidateChars)
+            val candidateInt = candidate.toIntOrNull() ?: continue
+            if (candidateInt < lowerLimit || candidateInt > upperLimit) continue
+
+            val validation = ReadingValidator.validateReading(candidate, previousReading)
+            if (!validation.isValid && validation.errorCode != ReadingValidator.ErrorCode.HIGH_USAGE_WARNING) continue
+
+            var score = 0f
+            score -= abs(candidateInt - predictedValue).toFloat() * 0.08f
+            score -= rolloverPenalty(String.format("%05d", lowerLimit), candidate)
+
+            readingHistory.lastOrNull()?.let { last ->
+                if (candidate.take(4) == last.take(4)) score += 10f
+            }
+
+            if (score > bestScore) {
+                bestScore = score
+                bestReading = candidate
+            }
+        }
+
+        val bounded = bestReading.toIntOrNull()?.coerceIn(lowerLimit, upperLimit) ?: (predicted.toIntOrNull() ?: lowerLimit)
+        return String.format("%05d", bounded)
+    }
+
+    private fun enforceRolloverAwareChoice(
+        primary: String,
+        alternatives: List<String>,
+        lowerLimit: Int,
+        upperLimit: Int
+    ): String {
+        val all = (listOf(primary) + alternatives).distinct()
+        val lowerReading = String.format("%05d", lowerLimit)
+
+        return all
+            .filter {
+                val value = it.toIntOrNull() ?: return@filter false
+                it.length == 5 && value in lowerLimit..upperLimit
+            }
+            .minByOrNull {
+                val value = it.toIntOrNull() ?: Int.MAX_VALUE
+                val delta = value - lowerLimit
+                val rollover = rolloverPenalty(lowerReading, it)
+                delta + rollover.toInt()
+            } ?: primary
+    }
+
+    private fun rolloverPenalty(previous: String, current: String): Float {
+        var penalty = 0f
+        for (i in 0..3) {
+            val prevDigit = previous[i]
+            val currDigit = current[i]
+            if (currDigit > prevDigit) {
+                val prevTail = previous.substring(i + 1)
+                val currTail = current.substring(i + 1)
+                val tailLooksLikeRollover = prevTail.all { it >= '7' } && currTail.all { it <= '2' }
+                if (!tailLooksLikeRollover) penalty += 15f
+            }
+        }
+        return penalty
+    }
+
+    private fun splitIntoSlotRects(
+        boundingBox: AndroidRect?,
+        digitCount: Int,
+        cropW: Int,
+        cropH: Int,
+        cropRect: Rect
+    ): List<Rect> {
+        val box = boundingBox ?: AndroidRect(0, 0, cropW, cropH)
+        val safeLeft = box.left.coerceIn(0, cropW - 1)
+        val safeTop = box.top.coerceIn(0, cropH - 1)
+        val safeRight = box.right.coerceIn(safeLeft + 1, cropW)
+        val safeBottom = box.bottom.coerceIn(safeTop + 1, cropH)
+
+        val safeWidth = safeRight - safeLeft
+        val safeHeight = safeBottom - safeTop
+        val slots = digitCount.coerceAtLeast(1)
+        val slotW = (safeWidth / slots).coerceAtLeast(1)
+
+        val rects = ArrayList<Rect>(slots)
+        for (i in 0 until slots) {
+            val x = safeLeft + i * slotW
+            val w = if (i == slots - 1) safeRight - x else slotW
+            rects.add(Rect(cropRect.x + x, cropRect.y + safeTop, w, safeHeight))
+        }
+        return rects
+    }
+
+    private fun splitWholeCropToSlots(cropRect: Rect): List<Rect> {
+        val slotW = (cropRect.width / 5).coerceAtLeast(1)
+        val rects = ArrayList<Rect>(5)
+        for (i in 0 until 5) {
+            val x = cropRect.x + i * slotW
+            val w = if (i == 4) cropRect.width - (slotW * i) else slotW
+            rects.add(Rect(x, cropRect.y, w, cropRect.height))
+        }
+        return rects
+    }
+
+    private fun extractDigitCandidate(text: String): String? {
+        if (text.isBlank()) return null
+
+        val normalized = text.uppercase(Locale.US)
+            .replace('O', '0')
+            .replace('Q', '0')
+            .replace('D', '0')
+            .replace('I', '1')
+            .replace('L', '1')
+            .replace('S', '5')
+            .replace('B', '8')
+
+        val digitsOnly = normalized.filter { it.isDigit() }
+        if (digitsOnly.length >= 5) {
+            return Regex("\\d{5}").findAll(digitsOnly).lastOrNull()?.value ?: digitsOnly.takeLast(5)
+        }
+
+        return if (digitsOnly.length >= 3) digitsOnly else null
+    }
+
+    private fun normalizeToFiveDigits(raw: String): String? {
+        val digitsOnly = raw.filter { it.isDigit() }
+        if (digitsOnly.length < 5) return null
+        return digitsOnly.takeLast(5)
+    }
+
+    private fun candidateScore(digitLength: Int, hasBox: Boolean): Float {
+        val lengthScore = when {
+            digitLength >= 5 -> 300f
+            digitLength == 4 -> 200f
+            digitLength == 3 -> 100f
+            else -> 0f
+        }
+        return lengthScore + if (hasBox) 20f else 0f
+    }
+
+    private fun rotateIfNeeded(bitmap: Bitmap, rotation: Int): Bitmap {
+        if (rotation == 0) return bitmap
+        val matrix = android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
     private fun saveDebugImage(bitmap: Bitmap, fileName: String) {
@@ -1544,21 +1371,6 @@ class MeterAnalyzer(
             }
         } catch (e: Exception) {
             Log.e("MeterAnalyzer", "Failed to save debug image", e)
-        }
-    }
-
-    private fun saveDigitBitmap(bitmap: Bitmap, predictedDigit: Int, rect: Rect, suffix: String = "") {
-        try {
-            val timestamp = dateFormatter.format(Date())
-            val predictedLabel = if (predictedDigit >= 0) predictedDigit.toString() else "unknown"
-            val fileName = "${timestamp}_${debugCounter++}_pred-${predictedLabel}_${rect.width}x${rect.height}_$suffix.png"
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                saveViaMediaStore(bitmap, fileName)
-            } else {
-                saveLegacy(bitmap, fileName)
-            }
-        } catch (e: Exception) {
-            Log.e("MeterAnalyzer", "Failed to save digit bitmap", e)
         }
     }
 
@@ -1579,9 +1391,6 @@ class MeterAnalyzer(
             contentValues.clear()
             contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
             resolver.update(uri, contentValues, null, null)
-            Log.d("MeterAnalyzer", "Saved digit debug image to MediaStore: $uri")
-        } else {
-            Log.e("MeterAnalyzer", "Failed to insert MediaStore record for $fileName")
         }
     }
 
@@ -1593,48 +1402,14 @@ class MeterAnalyzer(
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
         }
         MediaScannerConnection.scanFile(context, arrayOf(outFile.absolutePath), arrayOf("image/png"), null)
-        Log.d("MeterAnalyzer", "Saved digit debug image: ${outFile.absolutePath}")
     }
 
-    /**
-     * Convert ImageProxy to OpenCV Mat
-     * Handles YUV_420_888 format which is common in CameraX
-     */
-    private fun imageProxyToMat(image: ImageProxy): Mat {
-        // For simplicity in this example, we'll use the Bitmap conversion provided by CameraX or Android
-        // But since we need a Mat, and ImageProxy -> Bitmap -> Mat is easier than raw YUV handling for now:
-        val bitmap = image.toBitmap()
-        val mat = Mat()
-        if (bitmap != null) {
-            // Handle rotation
-            val rotation = image.imageInfo.rotationDegrees
-            val rotatedBitmap = if (rotation != 0) {
-                val matrix = android.graphics.Matrix()
-                matrix.postRotate(rotation.toFloat())
-                Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-            } else {
-                bitmap
-            }
-            Utils.bitmapToMat(rotatedBitmap, mat)
-        }
-        return mat
-    }
-
-    private fun calculateCenterDensity(mat: Mat): Double {
-        if (mat.empty()) return 0.0
-        
-        val cx = mat.cols() / 2
-        val cy = mat.rows() / 2
-        val w = mat.cols() / 3 // Check middle 1/3rd
-        val h = mat.rows() / 3
-        
-        val roi = Rect(cx - w/2, cy - h/2, w, h)
-        val submat = mat.submat(roi)
-        val nonZero = Core.countNonZero(submat)
-        val total = w * h
-        
-        submat.release()
-        
-        return if (total > 0) nonZero.toDouble() / total else 0.0
-    }
+    private data class ResolvedReading(
+        val reading: String,
+        val confidence: Float,
+        val rects: List<Rect>,
+        val source: String,
+        val hasFreshEvidence: Boolean
+    )
 }
+

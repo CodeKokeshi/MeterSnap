@@ -1,16 +1,15 @@
 package com.kokeshi.metersnap.ocr
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.os.Build
 import android.util.Log
-import com.baidu.paddle.lite.MobileConfig
-import com.baidu.paddle.lite.PaddlePredictor
-import com.baidu.paddle.lite.PowerMode
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 
 /**
- * Handles Paddle Lite OCR model file prep and predictor initialization.
+ * Handles Paddle Lite OCR model prep and predictor initialization via reflection.
  */
 object PaddleOcrManager {
     private const val TAG = "PaddleOcrManager"
@@ -23,74 +22,123 @@ object PaddleOcrManager {
 
     @Volatile
     private var initialized = false
+    @Volatile
+    private var lastStatus = "IDLE"
 
-    var detPredictor: PaddlePredictor? = null
-        private set
-    var clsPredictor: PaddlePredictor? = null
-        private set
-    var recPredictor: PaddlePredictor? = null
-        private set
+    private var recPredictor: Any? = null
+    private var recLabels: MutableList<String> = mutableListOf()
 
     @Synchronized
     fun init(context: Context, threads: Int = 4) {
         if (initialized) return
+        lastStatus = "INIT_START"
 
         try {
             System.loadLibrary("paddle_light_api_shared")
             System.loadLibrary("paddle_lite_jni")
         } catch (e: UnsatisfiedLinkError) {
+            val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "NA"
+            lastStatus = "INIT_LIB_FAIL_$abi"
             Log.e(TAG, "Failed to load Paddle native libraries", e)
             return
         }
 
         val appContext = context.applicationContext
-        val modelDir = appContext.filesDir
+        val filesDir = appContext.filesDir
+        val clsAsset = if (assetExists(appContext, CLS_MODEL)) CLS_MODEL else CLS_MODEL_LEGACY
 
-        val clsAssetName = if (assetExists(appContext, CLS_MODEL)) CLS_MODEL else CLS_MODEL_LEGACY
-        val requiredAssets = listOf(DET_MODEL, REC_MODEL, clsAssetName, OCR_KEYS, OCR_CONFIG)
-
-        requiredAssets.forEach { assetName ->
-            if (!copyAssetIfMissing(appContext, assetName)) {
-                Log.e(TAG, "Failed to prepare asset: $assetName")
+        val assets = arrayOf(DET_MODEL, REC_MODEL, clsAsset, OCR_KEYS, OCR_CONFIG)
+        for (asset in assets) {
+            val forceRefresh = true
+            if (!copyAsset(appContext, asset, forceRefresh)) {
+                lastStatus = "INIT_ASSET_FAIL"
+                Log.e(TAG, "Failed to prepare asset: $asset")
                 return
             }
         }
 
-        val detPath = File(modelDir, DET_MODEL).absolutePath
-        val recPath = File(modelDir, REC_MODEL).absolutePath
-        val clsPath = File(modelDir, clsAssetName).absolutePath
-
-        detPredictor = createPredictor(detPath, threads)
-        clsPredictor = createPredictor(clsPath, threads)
+        val recPath = File(filesDir, REC_MODEL).absolutePath
         recPredictor = createPredictor(recPath, threads)
+        recLabels = loadRecLabels(appContext)
 
-        initialized = detPredictor != null && clsPredictor != null && recPredictor != null
-        Log.i(TAG, "Paddle OCR initialized: $initialized")
+        initialized = recPredictor != null
+        lastStatus = if (initialized) "INIT_OK_L${recLabels.size}" else "INIT_PRED_FAIL"
+        Log.i(TAG, "Paddle OCR initialized: $initialized, labels=${recLabels.size}")
     }
 
     fun isInitialized(): Boolean = initialized
 
-    @Synchronized
-    fun release() {
-        detPredictor = null
-        clsPredictor = null
-        recPredictor = null
-        initialized = false
-    }
+    fun getDebugStatus(): String = lastStatus
 
-    private fun createPredictor(modelPath: String, threads: Int): PaddlePredictor? {
+    fun runRecognition(bitmap: Bitmap): String {
+        if (!initialized) {
+            lastStatus = "RUN_NO_INIT"
+            return ""
+        }
+        if (bitmap.width <= 0 || bitmap.height <= 0) {
+            lastStatus = "RUN_BAD_INPUT"
+            return ""
+        }
+
+        val predictor = recPredictor ?: return ""
         return try {
-            val config = MobileConfig().apply {
-                setModelFromFile(modelPath)
-                setPowerMode(PowerMode.LITE_POWER_HIGH)
-                setThreads(threads)
-            }
-            PaddlePredictor.createPaddlePredictor(config)
+            val out = PaddleRuntimeBridge.runRecognition(predictor, bitmap, recLabels)
+            lastStatus = if (out.isBlank()) "RUN_EMPTY" else "RUN_OK_${out.length}"
+            out
         } catch (e: Exception) {
-            Log.e(TAG, "Predictor init failed for model: $modelPath", e)
-            null
+            val kind = e::class.java.simpleName.take(10)
+            lastStatus = "RUN_ERR_$kind"
+            Log.d(TAG, "runRecognition failed", e)
+            ""
         }
     }
+
+    private fun createPredictor(modelPath: String, threads: Int): Any? {
+        return PaddleRuntimeBridge.createPredictor(modelPath, threads)
+    }
+
+    private fun loadRecLabels(context: Context): MutableList<String> {
+        val labels = mutableListOf<String>()
+        try {
+            context.assets.open(OCR_KEYS).bufferedReader().use { reader ->
+                val rawText = reader.readText()
+                val lines = rawText
+                    .lines()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+
+                if (lines.size == 1 && lines.first().length > 1) {
+                    lines.first().forEach { ch ->
+                        if (ch.isDigit() || ch == '.') {
+                            labels.add(ch.toString())
+                        }
+                    }
+                } else {
+                    for (line in lines) {
+                        if (line.length == 1) {
+                            labels.add(line)
+                        } else {
+                            line.forEach { ch ->
+                                if (ch.isDigit() || ch == '.') {
+                                    labels.add(ch.toString())
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Could not load OCR keys table", e)
+        }
+
+        if (labels.isEmpty()) {
+            for (digit in '0'..'9') labels.add(digit.toString())
+            labels.add(".")
+        }
+
+        return labels
+    }
+
 
     private fun assetExists(context: Context, assetName: String): Boolean {
         return try {
@@ -101,13 +149,13 @@ object PaddleOcrManager {
         }
     }
 
-    private fun copyAssetIfMissing(context: Context, assetName: String): Boolean {
-        val targetFile = File(context.filesDir, assetName)
-        if (targetFile.exists()) return true
+    private fun copyAsset(context: Context, assetName: String, overwrite: Boolean): Boolean {
+        val target = File(context.filesDir, assetName)
+        if (target.exists() && !overwrite) return true
 
         return try {
             context.assets.open(assetName).use { input ->
-                FileOutputStream(targetFile).use { output ->
+                FileOutputStream(target).use { output ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     while (true) {
                         val count = input.read(buffer)
@@ -124,4 +172,3 @@ object PaddleOcrManager {
         }
     }
 }
-
