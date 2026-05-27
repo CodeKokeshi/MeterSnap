@@ -27,4 +27,7 @@
     <color name="appearance_card_accent">#FF1565C0</color>
     <color name="prediction_stats_card_background">#FFE8F5E9</color>
     <color name="prediction_stats_card_text">#FF1E5F38</color>
+    <!-- Speech bubble: black bubble, white text in light mode -->
+    <color name="bubble_background">#FF000000</color>
+    <color name="bubble_text">#FFFFFFFF</color>
 </resources>

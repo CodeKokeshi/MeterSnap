@@ -20,6 +20,7 @@ class BootCompletedReceiver : BroadcastReceiver() {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             Log.d(TAG, "Device boot completed, rescheduling reminders")
             EndOfMonthReminderScheduler.scheduleReminders(context)
+            PeriodicScanReminderScheduler.schedule(context)
         }
     }
 }

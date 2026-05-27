@@ -171,6 +171,22 @@ class ProjectedReadingManager(private val context: Context) {
         val previousProjection = getPreviousMonthProjection()
         return previousProjection?.getEffectiveReading()
     }
+
+    /**
+     * Calculate an App-based end-of-month projection for the current billing period.
+     *
+     * Unlike the standard CWD projection (which uses the user-entered CWD receipt reading
+     * as the SMART baseline), this projection uses the App's own previous month projection
+     * as the SMART baseline — producing an independent estimate that may differ from the
+     * CWD one when the two baselines diverge.
+     *
+     * @return ProjectedReading using App's own baseline, or null if not enough data.
+     */
+    fun getAppBasedProjection(): ProjectedReading? {
+        val appPreviousReading = getAppPredictedPreviousReading() ?: return null
+        val (year, month) = predictor.getCurrentMonthYear()
+        return predictor.predictMonthEndReading(year, month, previousReadingOverride = appPreviousReading)
+    }
     
     /**
      * Verify/confirm a projection manually by the user.

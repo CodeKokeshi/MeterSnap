@@ -10,7 +10,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="Meter Reading"
-        app:endIconMode="clear_text">
+        app:endIconMode="clear_text"
+        app:suffixText="m&#x00B3;">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/edit_reading"

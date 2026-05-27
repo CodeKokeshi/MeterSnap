@@ -1,4 +1,4 @@
-package com.kokeshi.metersnap.data
+﻿package com.kokeshi.metersnap.data
 
 /**
  * Represents a complete bill calculation with source information.
@@ -108,8 +108,8 @@ data class DualBillComparison(
         
         return when {
             usageDifference == 0 -> "Both calculations match!"
-            usageDifference > 0 -> "App predicts ${usageDifference} cu.m. more usage"
-            else -> "App predicts ${-usageDifference} cu.m. less usage"
+            usageDifference > 0 -> "App predicts ${usageDifference} m\u00B3 more usage"
+            else -> "App predicts ${-usageDifference} m\u00B3 less usage"
         }
     }
     
@@ -118,7 +118,7 @@ data class DualBillComparison(
      */
     fun getFormattedBillDifference(): String {
         val prefix = if (billDifference >= 0) "+" else ""
-        return "${prefix}₱${String.format("%.2f", billDifference)}"
+        return "${prefix}\u20B1${String.format("%.2f", billDifference)}"
     }
     
     /**
@@ -126,6 +126,7 @@ data class DualBillComparison(
      */
     fun getFormattedUsageDifference(): String {
         val prefix = if (usageDifference >= 0) "+" else ""
-        return "${prefix}${usageDifference} cu.m."
+        return "${prefix}${usageDifference} m\u00B3"
     }
 }
+

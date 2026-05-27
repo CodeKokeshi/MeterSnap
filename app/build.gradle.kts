@@ -25,18 +25,20 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
+        debug {
+            isMinifyEnabled = false
+        }
     }
 
     // Prevent compression of TensorFlow Lite model files
-    aaptOptions {
-        noCompress("tflite")
-        noCompress("lite")
+    androidResources {
+        noCompress += listOf("tflite", "lite")
     }
 
     compileOptions {
@@ -68,8 +70,7 @@ dependencies {
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
-    implementation(libs.mlkit.text.recognition)
-    
+
     // Gson for JSON serialization
     implementation("com.google.code.gson:gson:2.10.1")
 

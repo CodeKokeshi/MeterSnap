@@ -122,7 +122,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="Current rates per cubic meter"
+                        android:text="Current rates per m³"
                         android:textColor="?android:attr/textColorSecondary"
                         android:textSize="12sp" />
 
@@ -171,7 +171,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="Rate per cubic meter"
+                        android:text="Rate per m³"
                         android:textColor="?android:attr/textColorSecondary"
                         android:textSize="12sp" />
 

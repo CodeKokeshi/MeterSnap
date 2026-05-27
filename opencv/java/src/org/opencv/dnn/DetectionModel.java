@@ -21,7 +21,6 @@ import org.opencv.utils.Converters;
  * DetectionModel allows to set params for preprocessing input image.
  * DetectionModel creates net from file with trained weights and config,
  * sets preprocessing input, runs forward pass and return result detections.
- * For DetectionModel SSD, Faster R-CNN, YOLO topologies are supported.
  */
 public class DetectionModel extends Model {
 

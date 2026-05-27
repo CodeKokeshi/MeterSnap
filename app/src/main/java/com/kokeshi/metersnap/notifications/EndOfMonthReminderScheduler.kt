@@ -85,9 +85,11 @@ object EndOfMonthReminderScheduler {
             }
         }
         
-        // Schedule 3-day reminder
-        val threeDaysBefore = billingEndDay - 3
-        if (threeDaysBefore > 0) {
+        // Schedule 3-day reminder.
+        // For early charge dates (1-3) billingEndDay - 3 ≤ 0, so clamp to day 1 of the month.
+        // Skip entirely only if it would land on or after the charge date itself (no room).
+        val threeDaysBefore = (billingEndDay - 3).coerceAtLeast(1)
+        if (threeDaysBefore < billingEndDay) {
             scheduleReminderForDate(
                 context = context,
                 year = targetYear,
@@ -99,10 +101,12 @@ object EndOfMonthReminderScheduler {
                 action = EndOfMonthReminderReceiver.ACTION_REMIND_SCAN
             )
         }
-        
-        // Schedule 1-day reminder
-        val oneDayBefore = billingEndDay - 1
-        if (oneDayBefore > 0) {
+
+        // Schedule 1-day reminder.
+        // For charge date 1, billingEndDay - 1 = 0 — clamp to day 1 (same day as charge date).
+        // Skip if it would collide with the charge date morning reminder (handled below).
+        val oneDayBefore = (billingEndDay - 1).coerceAtLeast(1)
+        if (oneDayBefore < billingEndDay) {
             scheduleReminderForDate(
                 context = context,
                 year = targetYear,

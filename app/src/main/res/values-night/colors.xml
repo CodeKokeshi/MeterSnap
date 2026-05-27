@@ -15,4 +15,7 @@
     <color name="appearance_card_accent">#FF90CAF9</color>
     <color name="prediction_stats_card_background">#FF123C25</color>
     <color name="prediction_stats_card_text">#FF90EE90</color>
+    <!-- Speech bubble: white bubble, black text in dark mode -->
+    <color name="bubble_background">#FFFFFFFF</color>
+    <color name="bubble_text">#FF000000</color>
 </resources>

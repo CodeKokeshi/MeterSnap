@@ -25,7 +25,23 @@
             app:navigationIcon="?attr/homeAsUpIndicator"
             app:title="Manual Input"
             app:titleTextColor="?android:attr/textColorPrimary"
-            app:titleMarginStart="8dp" />
+            app:titleMarginStart="8dp">
+
+            <!-- Torch toggle — handy for reading the meter in dim lighting -->
+            <ImageButton
+                android:id="@+id/btn_torch_manual"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="end"
+                android:layout_marginEnd="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Toggle torch"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_flashlight_off"
+                app:tint="?android:attr/textColorPrimary" />
+
+        </androidx.appcompat.widget.Toolbar>
 
         <!-- Content -->
         <LinearLayout
@@ -88,6 +104,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="16dp"
                         app:boxBackgroundMode="outline"
+                        app:suffixText="m&#x00B3;"
                         app:startIconDrawable="@android:drawable/ic_menu_today">
 
                         <com.google.android.material.textfield.TextInputEditText
@@ -104,6 +121,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         app:boxBackgroundMode="outline"
+                        app:suffixText="m&#x00B3;"
                         app:startIconDrawable="@android:drawable/ic_menu_recent_history">
 
                         <com.google.android.material.textfield.TextInputEditText
@@ -155,7 +173,7 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Current Reading: 1575\nPrevious Reading: 1546\nUsage: 29"
+                        android:text="Current Reading: 1575 m³\nPrevious Reading: 1546 m³\nUsage: 29 m³"
                         android:textColor="?android:attr/textColorSecondary"
                         android:textSize="14sp" />
                 </LinearLayout>

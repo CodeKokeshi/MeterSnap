@@ -265,7 +265,8 @@ class RateConfigurationActivity : AppCompatActivity() {
         }
         textRange.text = rangeText
 
-        val rateText = if (tier.minCubicMeters == 1 && tier.maxCubicMeters == 10) {
+        val rateText = if (tier.minCubicMeters == 1) {
+            // First tier is always the minimum charge regardless of range boundaries
             String.format(Locale.US, "₱%.2f (minimum charge)", tier.ratePerCubicMeter)
         } else {
             String.format(Locale.US, "₱%.2f per m³", tier.ratePerCubicMeter)

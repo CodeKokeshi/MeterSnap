@@ -76,6 +76,31 @@ class CropSelectionView(context: Context, attrs: AttributeSet?) : View(context, 
         invalidate()
     }
 
+    fun setSelection(selectionInView: RectF) {
+        val bounded = RectF(
+            selectionInView.left.coerceIn(0f, width.toFloat()),
+            selectionInView.top.coerceIn(0f, height.toFloat()),
+            selectionInView.right.coerceIn(0f, width.toFloat()),
+            selectionInView.bottom.coerceIn(0f, height.toFloat())
+        )
+        if (bounded.width() < minSizePx || bounded.height() < minSizePx) {
+            clearSelection()
+            return
+        }
+        selectionRect.set(bounded)
+        hasSelection = true
+        mode = DragMode.NONE
+        invalidate()
+    }
+
+    fun getSelection(): RectF? {
+        return if (hasSelection && selectionRect.width() >= minSizePx && selectionRect.height() >= minSizePx) {
+            RectF(selectionRect)
+        } else {
+            null
+        }
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (!active) return
@@ -175,12 +200,18 @@ class CropSelectionView(context: Context, attrs: AttributeSet?) : View(context, 
     }
 
     private fun updateDrawRect(x1: Float, y1: Float, x2: Float, y2: Float) {
-        val left = min(x1, x2)
-        val right = max(x1, x2)
-        val top = min(y1, y2)
-        val bottom = max(y1, y2)
+        val rawLeft = min(x1, x2)
+        val rawRight = max(x1, x2)
+        val rawTop = min(y1, y2)
+        val rawBottom = max(y1, y2)
+        val squareSize = min(rawRight - rawLeft, rawBottom - rawTop)
 
-        selectionRect.set(left, top, right, bottom)
+        selectionRect.set(
+            rawLeft,
+            rawTop,
+            rawLeft + squareSize,
+            rawTop + squareSize
+        )
         hasSelection = selectionRect.width() >= touchSlop && selectionRect.height() >= touchSlop
     }
 
@@ -196,10 +227,11 @@ class CropSelectionView(context: Context, attrs: AttributeSet?) : View(context, 
     }
 
     private fun resizeRectTo(x: Float, y: Float) {
-        val right = x.coerceIn(selectionRect.left + minSizePx, width.toFloat())
-        val bottom = y.coerceIn(selectionRect.top + minSizePx, height.toFloat())
-        selectionRect.right = right
-        selectionRect.bottom = bottom
+        val maxSize = min(width.toFloat() - selectionRect.left, height.toFloat() - selectionRect.top)
+        val targetSize = max(x - selectionRect.left, y - selectionRect.top)
+            .coerceIn(minSizePx, maxSize)
+        selectionRect.right = selectionRect.left + targetSize
+        selectionRect.bottom = selectionRect.top + targetSize
     }
 
     private fun isNearResizeHandle(x: Float, y: Float): Boolean {

@@ -2,9 +2,12 @@ package com.kokeshi.metersnap
 
 import android.content.Context
 import android.content.Intent
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
@@ -22,6 +25,7 @@ import com.kokeshi.metersnap.utils.RatePreferences
 import com.kokeshi.metersnap.utils.RateTableManager
 import com.kokeshi.metersnap.utils.BillCalculator.BillResult
 import com.kokeshi.metersnap.utils.DeveloperOptions
+import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.utils.SessionResetManager
 
@@ -31,9 +35,13 @@ class ManualInputActivity : AppCompatActivity() {
     private lateinit var editCurrentReading: TextInputEditText
     private lateinit var editPreviousReading: TextInputEditText
     private lateinit var btnCalculate: Button
+    private lateinit var btnTorchManual: ImageButton
     private lateinit var ratePreferences: RatePreferences
     private lateinit var rateTableManager: RateTableManager
     private lateinit var projectedReadingManager: ProjectedReadingManager
+    private lateinit var historyManager: HistoryManager
+
+    private var isTorchOn = false
 
     companion object {
         private const val PREFS_NAME = "MeterSnapPrefs"
@@ -48,17 +56,32 @@ class ManualInputActivity : AppCompatActivity() {
         ratePreferences = RatePreferences(this)
         rateTableManager = RateTableManager(this)
         projectedReadingManager = ProjectedReadingManager(this)
+        historyManager = HistoryManager(this)
         
         initializeViews()
         setupToolbar()
         setupWindowInsets()
         setupListeners()
         
-        // Auto-populate previous reading
+        // Auto-populate previous reading from saved preferences
         val prefs = getSharedPreferences("MeterSnapPrefs", Context.MODE_PRIVATE)
         val previousReading = prefs.getInt("previous_reading", -1)
         if (previousReading != -1) {
             editPreviousReading.setText(previousReading.toString())
+        }
+
+        // Pre-fill current reading if the snap camera detected (or partially detected) a value.
+        // This avoids the user having to retype a number the camera already read.
+        val snapReading = intent.getStringExtra("SNAP_READING")
+        if (!snapReading.isNullOrBlank()) {
+            editCurrentReading.setText(snapReading)
+            // Move cursor to end so the user can quickly correct/confirm
+            editCurrentReading.setSelection(snapReading.length)
+            Toast.makeText(
+                this,
+                "Snap reading pre-filled: $snapReading - please verify before calculating.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
     
@@ -89,6 +112,7 @@ class ManualInputActivity : AppCompatActivity() {
         editCurrentReading = findViewById(R.id.edit_current_reading)
         editPreviousReading = findViewById(R.id.edit_previous_reading)
         btnCalculate = findViewById(R.id.btn_calculate)
+        btnTorchManual = findViewById(R.id.btn_torch_manual)
     }
 
     private fun setupToolbar() {
@@ -96,24 +120,63 @@ class ManualInputActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
         supportActionBar?.title = "Manual Input"
-        
-        // Apply status bar insets to toolbar using modern WindowInsets API
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
-            val statusBarInsets = windowInsets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-            view.setPadding(
-                view.paddingLeft, 
-                statusBarInsets.top, 
-                view.paddingRight, 
-                view.paddingBottom
-            )
-            windowInsets
-        }
     }
 
     private fun setupListeners() {
         btnCalculate.setOnClickListener {
             calculateBill()
         }
+        btnTorchManual.setOnClickListener {
+            toggleTorch()
+        }
+    }
+
+    // â”€â”€ Torch helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    private fun flashCameraId(): String? {
+        val cm = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        return cm.cameraIdList.firstOrNull { id ->
+            cm.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        }
+    }
+
+    private fun toggleTorch() {
+        val cm = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val cameraId = flashCameraId()
+        if (cameraId == null) {
+            Toast.makeText(this, "Torch not available on this device", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            isTorchOn = !isTorchOn
+            cm.setTorchMode(cameraId, isTorchOn)
+            btnTorchManual.setImageResource(
+                if (isTorchOn) R.drawable.ic_flashlight_on else R.drawable.ic_flashlight_off
+            )
+        } catch (e: Exception) {
+            isTorchOn = false
+            Toast.makeText(this, "Could not toggle torch", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun ensureTorchOff() {
+        if (!isTorchOn) return
+        try {
+            val cm = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            flashCameraId()?.let { cm.setTorchMode(it, false) }
+        } catch (_: Exception) {}
+        isTorchOn = false
+    }
+
+    override fun onStop() {
+        super.onStop()
+        ensureTorchOff()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        ensureTorchOff()
     }
 
     private fun calculateBill() {
@@ -135,6 +198,24 @@ class ManualInputActivity : AppCompatActivity() {
         }
 
         if (currentReading < previousReading) {
+            // Meter rollover: digits physically wrap from 99999 â†’ 00000
+            if (previousReading > 80000 && currentReading < 20000) {
+                val rolloverUsage = (99999 - previousReading) + currentReading + 1
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Meter Rolled Over?")
+                    .setMessage(
+                        "The current reading ($currentReading) is lower than the previous reading ($previousReading).\n\n" +
+                        "If your meter rolled over from 99999 back to 00000, the actual usage would be:\n" +
+                        "$rolloverUsage m\u00B3\n\n" +
+                        "Is that correct?"
+                    )
+                    .setPositiveButton("Yes, Meter Rolled Over") { _, _ ->
+                        continueCalculation(currentReading, previousReading, rolloverUsage)
+                    }
+                    .setNegativeButton("No, Re-enter") { dialog, _ -> dialog.dismiss() }
+                    .show()
+                return
+            }
             Toast.makeText(this, "Current reading must be greater than previous reading", Toast.LENGTH_SHORT).show()
             return
         }
@@ -142,20 +223,66 @@ class ManualInputActivity : AppCompatActivity() {
         // Calculate usage
         val usage = currentReading - previousReading
 
-        if (usage == 0) {
-            Toast.makeText(this, "Usage cannot be zero", Toast.LENGTH_SHORT).show()
+        // 0 usage is valid (property vacant, duplicate read) - minimum charge still applies
+
+        // â”€â”€ Impossible / anomalous usage check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // Manual entry is intentional, so we warn but always allow proceeding.
+        val predictor = com.kokeshi.metersnap.utils.ReadingPredictor(this)
+        val (dynamicThreshold, hardCap) = predictor.getUsagePlausibilityThresholds()
+
+        val isHardImpossible = usage > hardCap
+        val isDynamicAnomaly = dynamicThreshold != null && usage > dynamicThreshold && !isHardImpossible
+
+        if (isHardImpossible || isDynamicAnomaly) {
+            val title = if (isHardImpossible) "Unusually High Reading" else "Usage Looks High"
+            val message = if (isHardImpossible) {
+                "Usage of $usage m\u00B3 in one billing period is beyond a realistic residential amount.\n\n" +
+                "Double-check your readings before proceeding."
+            } else {
+                val avgMonthly = dynamicThreshold!! / 3
+                "Usage of $usage m\u00B3 is more than 3\u00D7 your usual ~$avgMonthly m\u00B3/month.\n\n" +
+                "Possible typo, or unusual usage (leak, extended family visit, etc.)?\n\n" +
+                "You can still proceed - this is just a heads-up."
+            }
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("Proceed Anyway") { _, _ ->
+                    continueCalculation(currentReading, previousReading, usage)
+                }
+                .setNegativeButton("Re-enter") { dialog, _ -> dialog.dismiss() }
+                .show()
             return
         }
 
+        continueCalculation(currentReading, previousReading, usage)
+    }
+
+    /**
+     * Continues bill calculation after usage validation passes (or user confirms a warning).
+     */
+    private fun continueCalculation(currentReading: Int, previousReading: Int, usage: Int) {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val savedPreviousReading = prefs.getInt(PREF_PREVIOUS_READING, -1)
         val hasSavedBaseline = savedPreviousReading >= 0
+        val latestSavedCurrentReading = historyManager.getLatestEntry()?.currentReading
+        val isPossibleMeterRollover =
+            latestSavedCurrentReading != null && latestSavedCurrentReading > 80000 && currentReading < 20000
+
+        if (latestSavedCurrentReading != null
+            && currentReading < latestSavedCurrentReading
+            && !isPossibleMeterRollover
+        ) {
+            showCurrentReadingRegressionDialog(currentReading, latestSavedCurrentReading)
+            return
+        }
 
         if (hasSavedBaseline && previousReading != savedPreviousReading) {
             showPreviousReadingChangeOptions(
                 newPreviousReading = previousReading,
                 currentReading = currentReading,
-                rateType = ratePreferences.getRateType()
+                rateType = ratePreferences.getRateType(),
+                latestSavedCurrentReading = latestSavedCurrentReading
             )
             return
         }
@@ -164,37 +291,90 @@ class ManualInputActivity : AppCompatActivity() {
             currentReading = currentReading,
             previousReading = previousReading,
             rateType = ratePreferences.getRateType(),
-            calculatorMode = false
+            calculatorMode = false,
+            usageOverride = usage
         )
+    }
+
+    private fun showCurrentReadingRegressionDialog(currentReading: Int, latestSavedReading: Int) {
+        AlertDialog.Builder(this)
+            .setTitle("Inconsistencies Detected")
+            .setMessage(
+                "The new reading ($currentReading) is lower than your latest saved reading ($latestSavedReading).\n\n" +
+                    "Water usage should not go backward within the same session.\n\n" +
+                    "If this belongs to an older meter session, start a new session first. " +
+                    "Otherwise, use Temporary Calculator so history and projections stay unchanged."
+            )
+            .setPositiveButton("Start New Session") { _, _ ->
+                startActivity(Intent(this, HistorySettingsActivity::class.java))
+            }
+            .setNeutralButton("Temporary Calculator") { _, _ ->
+                proceedWithCalculation(
+                    currentReading = currentReading,
+                    previousReading = editPreviousReading.text.toString().toIntOrNull() ?: return@setNeutralButton,
+                    rateType = ratePreferences.getRateType(),
+                    calculatorMode = true
+                )
+            }
+            .setNegativeButton("Re-enter", null)
+            .show()
     }
 
     private fun showPreviousReadingChangeOptions(
         newPreviousReading: Int,
         currentReading: Int,
-        rateType: WaterRateType
+        rateType: WaterRateType,
+        latestSavedCurrentReading: Int?
     ) {
+        val isBackwardInconsistency =
+            latestSavedCurrentReading != null && newPreviousReading < latestSavedCurrentReading
+        val title = if (isBackwardInconsistency) "Inconsistencies Detected" else "Previous Reading Changed"
+        val message = if (isBackwardInconsistency) {
+            "The Previous Reading you entered ($newPreviousReading) is lower than your latest saved reading ($latestSavedCurrentReading).\n\n" +
+                "This usually means the app is looking at an older meter session. Start a new session to reset history + projections, or use Temporary Calculator if you only need a one-off estimate.\n\n" +
+                "You can still review older sessions in:\nSettings > History and Readings > Session Logs"
+        } else {
+            "You entered a different Previous Reading.\n\n" +
+                "Choose how to continue:\n" +
+                "\u2022 Start new meter session: clears history + projections and uses this as your new baseline\n" +
+                "\u2022 Temporary calculator mode: use this only for this calculation\n\n" +
+                "You can view previous sessions in:\n" +
+                "Settings > History and Readings > Session Logs"
+        }
         AlertDialog.Builder(this)
-            .setTitle("Previous Reading Changed")
-            .setMessage(
-                "You entered a different Previous Reading.\n\n" +
-                    "Choose how to continue:\n" +
-                    "• Start new meter session: clears history + projections and uses this as your new baseline\n" +
-                    "• Temporary calculator mode: use this only for this calculation\n\n" +
-                    "You can view previous sessions in:\n" +
-                    "Settings > History and Readings > Session Logs"
-            )
+            .setTitle(title)
+            .setMessage(message)
             .setPositiveButton("Start New Session") { _, _ ->
-                SessionResetManager.resetForNewMeterSession(this, newPreviousReading)
-                Toast.makeText(this, "New meter session started. Previous session archived to Session Logs", Toast.LENGTH_LONG).show()
-                proceedWithCalculation(
-                    currentReading = currentReading,
-                    previousReading = newPreviousReading,
-                    rateType = rateType,
-                    calculatorMode = false
-                )
+                // Second confirmation - resetting deletes ALL history and projections.
+                // One accidental tap on the primary button should not be destructive.
+                AlertDialog.Builder(this)
+                    .setTitle("Delete All History?")
+                    .setMessage(
+                        "This will permanently clear all your scan history and projections.\n\n" +
+                        "Your previous session will be archived to Session Logs, but the detailed " +
+                        "history used for bill projections will be gone.\n\n" +
+                        "Are you sure?"
+                    )
+                    .setPositiveButton("Yes, Reset") { _, _ ->
+                        SessionResetManager.resetForNewMeterSession(this, newPreviousReading)
+                        Toast.makeText(this, "New meter session started. Previous session archived to Session Logs", Toast.LENGTH_LONG).show()
+                        proceedWithCalculation(
+                            currentReading = currentReading,
+                            previousReading = newPreviousReading,
+                            rateType = rateType,
+                            calculatorMode = false
+                        )
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
             }
             .setNeutralButton("Temporary Calculator") { _, _ ->
-                Toast.makeText(this, "Temporary calculator mode. Session Logs remain available from Settings > History and Readings > Session Logs", Toast.LENGTH_LONG).show()
+                val toastMessage = if (isBackwardInconsistency) {
+                    "Temporary calculator mode only. History and projections were left unchanged."
+                } else {
+                    "Temporary calculator mode. Session Logs remain available from Settings > History and Readings > Session Logs"
+                }
+                Toast.makeText(this, toastMessage, Toast.LENGTH_LONG).show()
                 proceedWithCalculation(
                     currentReading = currentReading,
                     previousReading = newPreviousReading,
@@ -210,9 +390,10 @@ class ManualInputActivity : AppCompatActivity() {
         currentReading: Int,
         previousReading: Int,
         rateType: WaterRateType,
-        calculatorMode: Boolean
+        calculatorMode: Boolean,
+        usageOverride: Int? = null
     ) {
-        val usage = currentReading - previousReading
+        val usage = usageOverride ?: (currentReading - previousReading)
 
         val customRates = ratePreferences.getCustomRates()
         

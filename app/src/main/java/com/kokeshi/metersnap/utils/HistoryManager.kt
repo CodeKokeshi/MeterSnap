@@ -89,6 +89,10 @@ class HistoryManager(context: Context) {
     fun getEntryById(id: String): ScanHistoryEntry? {
         return getAllHistory().find { it.id == id }
     }
+
+    fun getLatestEntry(): ScanHistoryEntry? {
+        return getAllHistory().maxByOrNull { it.timestamp }
+    }
     
     /**
      * Clear all history

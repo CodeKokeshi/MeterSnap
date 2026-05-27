@@ -52,10 +52,13 @@ class SessionLogManager(private val context: Context) {
         val previousReadingUsed = if (previousReading >= 0) previousReading else fallbackPrev
         val lastCurrentReading = history.maxByOrNull { it.timestamp }?.currentReading ?: previousReadingUsed
 
+        val createdAt = System.currentTimeMillis()
+        val dateStr = java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault())
+            .format(java.util.Date(createdAt))
         val archive = SessionArchive(
             id = UUID.randomUUID().toString(),
-            createdAt = System.currentTimeMillis(),
-            label = "Last Previous Reading: $previousReadingUsed",
+            createdAt = createdAt,
+            label = "Prev: $previousReadingUsed • $dateStr",
             previousReadingUsed = previousReadingUsed,
             lastCurrentReadingUsed = lastCurrentReading,
             historyEntries = history,

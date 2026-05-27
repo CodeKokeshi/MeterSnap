@@ -17,7 +17,6 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Date -->
         <TextView
             android:id="@+id/text_date"
             android:layout_width="match_parent"
@@ -27,7 +26,6 @@
             android:textColor="?android:attr/textColorSecondary"
             android:textStyle="italic" />
 
-        <!-- Usage and Reading -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -51,7 +49,7 @@
                     android:id="@+id/text_usage"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="29 m³"
+                    android:text="29 m&#x00B3;"
                     android:textSize="18sp"
                     android:textStyle="bold"
                     android:textColor="@android:color/holo_blue_dark"
@@ -75,7 +73,7 @@
                     android:id="@+id/text_reading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="1546 → 1575"
+                    android:text="1546 m&#x00B3; &#x2192; 1575 m&#x00B3;"
                     android:textSize="14sp"
                     android:textStyle="bold"
                     android:textColor="?android:attr/textColorPrimary"
@@ -83,14 +81,12 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Divider -->
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
             android:background="?android:attr/dividerVertical"
             android:layout_marginVertical="12dp" />
 
-        <!-- Total Bill -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -110,13 +106,12 @@
                 android:id="@+id/text_total_bill"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="₱350.50"
+                android:text="&#x20B1;350.50"
                 android:textSize="20sp"
                 android:textStyle="bold"
                 android:textColor="@android:color/holo_green_dark" />
         </LinearLayout>
 
-        <!-- Tap hint -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

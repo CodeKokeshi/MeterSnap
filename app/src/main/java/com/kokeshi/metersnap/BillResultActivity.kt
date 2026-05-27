@@ -38,10 +38,12 @@ import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
 import com.kokeshi.metersnap.data.ScanHistoryEntry
 import com.kokeshi.metersnap.utils.BillCalculator
+import com.kokeshi.metersnap.utils.ChargeDateHelper
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.utils.RatePreferences
 import com.kokeshi.metersnap.utils.RateTableManager
+import com.kokeshi.metersnap.notifications.PeriodicScanReminderScheduler
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -62,6 +64,7 @@ class BillResultActivity : AppCompatActivity() {
     private lateinit var textWaterBill: TextView
     private lateinit var textESFFee: TextView
     private lateinit var textTotalBill: TextView
+    private lateinit var textAvgBill: TextView
     private lateinit var btnSaveToGallery: Button
     private lateinit var btnHome: Button
     
@@ -94,6 +97,8 @@ class BillResultActivity : AppCompatActivity() {
     private var sessionId: String = UUID.randomUUID().toString()
     private var historySaved: Boolean = false
     private var originalTimestamp: Long = 0L
+    // Recorded at onCreate so history timestamp reflects scan time, not departure time
+    private var entryTimestamp: Long = 0L
     
     // Managers
     private lateinit var historyManager: HistoryManager
@@ -108,7 +113,8 @@ class BillResultActivity : AppCompatActivity() {
 
         historyManager = HistoryManager(this)
         projectedReadingManager = ProjectedReadingManager(this)
-        
+        entryTimestamp = System.currentTimeMillis()
+
         initializeViews()
         setupToolbar()
         setupWindowInsets()
@@ -157,6 +163,7 @@ class BillResultActivity : AppCompatActivity() {
         textWaterBill = findViewById(R.id.text_water_bill)
         textESFFee = findViewById(R.id.text_esf_fee)
         textTotalBill = findViewById(R.id.text_total_bill)
+        textAvgBill = findViewById(R.id.text_avg_bill)
         btnSaveToGallery = findViewById(R.id.btn_save_to_gallery)
         btnHome = findViewById(R.id.btn_home)
     }
@@ -166,18 +173,7 @@ class BillResultActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
         supportActionBar?.title = "Bill Calculation"
-
-        // Apply status bar insets to toolbar using modern WindowInsets API
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
-            val statusBarInsets = windowInsets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-            view.setPadding(
-                view.paddingLeft,
-                statusBarInsets.top,
-                view.paddingRight,
-                view.paddingBottom
-            )
-            windowInsets
-        }
+        // Window insets for the toolbar are applied in setupWindowInsets()
     }
 
     private fun setupListeners() {
@@ -204,6 +200,15 @@ class BillResultActivity : AppCompatActivity() {
             }
         }
         
+        // Tooltip balloon - dismiss on X
+        val readingCorrectionTip = findViewById<android.view.View>(R.id.reading_correction_tip)
+        findViewById<android.widget.ImageButton>(R.id.btn_dismiss_tip).setOnClickListener {
+            readingCorrectionTip.visibility = android.view.View.GONE
+        }
+
+        // HITL: Make previous reading editable (corrects app's projection baseline)
+        textPreviousReading.setOnClickListener { showEditPreviousReadingDialog() }
+
         // HITL: Make current reading editable
         val editClickListener = {
             showEditCurrentReadingDialog()
@@ -250,7 +255,7 @@ class BillResultActivity : AppCompatActivity() {
             }
             
             if (newReading < previousReading) {
-                Toast.makeText(this, "Current reading must be ≥ previous ($previousReading)", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Current reading must be \u2265 previous ($previousReading)", Toast.LENGTH_LONG).show()
                 return@setPositiveButton
             }
             
@@ -280,6 +285,88 @@ class BillResultActivity : AppCompatActivity() {
         builder.show()
     }
     
+    /**
+     * HITL - Show dialog to edit the previous reading when the app's
+     * Month-End projection from last month doesn't match the actual receipt.
+     * Saves the correction back to ProjectedReadingManager so future sessions
+     * use the verified value as their baseline.
+     */
+    private fun showEditPreviousReadingDialog() {
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("Edit Previous Reading")
+        builder.setMessage("Enter the actual previous reading from your receipt:")
+
+        val input = EditText(this)
+        input.inputType = InputType.TYPE_CLASS_NUMBER
+        input.setText(previousReading.toString())
+        input.setSelection(input.text.length)
+
+        val container = android.widget.FrameLayout(this)
+        val params = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+        val margin = (16 * resources.displayMetrics.density).toInt()
+        params.leftMargin = margin
+        params.rightMargin = margin
+        params.topMargin = margin / 2
+        input.layoutParams = params
+        container.addView(input)
+        builder.setView(container)
+
+        builder.setPositiveButton("Update") { dialog, _ ->
+            val newReadingText = input.text.toString()
+            val newReading = newReadingText.toIntOrNull()
+
+            if (newReading == null) {
+                Toast.makeText(this, "Please enter a valid number", Toast.LENGTH_SHORT).show()
+                return@setPositiveButton
+            }
+
+            if (newReading > currentReading) {
+                Toast.makeText(this, "Previous reading must be \u2264 current ($currentReading)", Toast.LENGTH_LONG).show()
+                return@setPositiveButton
+            }
+
+            if (newReading == previousReading) {
+                dialog.dismiss()
+                return@setPositiveButton
+            }
+
+            // Update and recalculate
+            previousReading = newReading
+            recalculateBill()
+
+            // Persist the correction against the month this entry actually belongs to,
+            // not always "last calendar month" (which corrupts the wrong projection when
+            // viewing old history entries).
+            val projectedReadingManager = com.kokeshi.metersnap.utils.ProjectedReadingManager(this)
+            val cal = java.util.Calendar.getInstance()
+            val entryTs = if (originalTimestamp > 0L) originalTimestamp else System.currentTimeMillis()
+            cal.timeInMillis = entryTs
+            // The previous reading belongs to the month *before* this entry's month
+            cal.add(java.util.Calendar.MONTH, -1)
+            projectedReadingManager.verifyProjection(
+                cal.get(java.util.Calendar.YEAR),
+                cal.get(java.util.Calendar.MONTH) + 1,
+                newReading
+            )
+
+            if (isFromHistory) {
+                saveEditedHistoryEntry()
+            }
+
+            Toast.makeText(this, "Bill recalculated with corrected previous reading", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
+
+        builder.setNegativeButton("Cancel") { dialog, _ ->
+            dialog.cancel()
+        }
+
+        builder.show()
+    }
+
     /**
      * Recalculate the bill based on the new current reading.
      * Updates all UI elements in real-time.
@@ -353,19 +440,58 @@ class BillResultActivity : AppCompatActivity() {
      */
     private fun updateDisplay() {
         // Update readings display
-        textPreviousReading.text = previousReading.toString()
-        textCurrentReading.text = currentReading.toString()
+        textPreviousReading.text = "Previous: $previousReading m\u00B3"
+        textCurrentReading.text = "$currentReading m\u00B3"
         
         // Update usage
-        textUsage.text = "$usage usage"
+        textUsage.text = "$usage m\u00B3"
         
         // Update tier breakdown
         displayTierBreakdown()
         
         // Update totals
-        textWaterBill.text = String.format(Locale.US, "₱%.2f", waterBill)
-        textESFFee.text = String.format(Locale.US, "₱%.2f", esfFee)
-        textTotalBill.text = String.format(Locale.US, "₱%.2f", totalBill)
+        textWaterBill.text = String.format(Locale.US, "\u20B1%.2f", waterBill)
+        textESFFee.text = String.format(Locale.US, "\u20B1%.2f", esfFee)
+        textTotalBill.text = String.format(Locale.US, "\u20B1%.2f", totalBill)
+
+        // Show historical average context (excluding the current entry which isn't saved yet)
+        updateAvgBillDisplay()
+    }
+
+    /**
+     * Computes and shows the historical bill context beneath the total.
+     * Uses the max-usage entry from each prior billing period so snapshots do not skew the average.
+     */
+    private fun updateAvgBillDisplay() {
+        val chargeDate = ChargeDateHelper.getChargeDate(this)
+        val currentTimestamp = if (isFromHistory && originalTimestamp > 0L) originalTimestamp else entryTimestamp
+        val currentPeriodKey = ChargeDateHelper.getBillingPeriodKey(currentTimestamp, chargeDate)
+
+        val priorBills = historyManager.getAllHistory()
+            .filter { entry ->
+                ChargeDateHelper.getBillingPeriodKey(entry.timestamp, chargeDate) != currentPeriodKey
+            }
+            .groupBy { entry ->
+                ChargeDateHelper.getBillingPeriodKey(entry.timestamp, chargeDate)
+            }
+            .mapNotNull { (_, entries) ->
+                entries.maxByOrNull { it.usage }?.totalBill
+            }
+
+        if (priorBills.isEmpty()) {
+            textAvgBill.visibility = android.view.View.GONE
+            return
+        }
+
+        val avg = priorBills.average()
+        textAvgBill.text = String.format(
+            Locale.US,
+            "Your avg: \u20B1%.2f over last %d month%s",
+            avg,
+            priorBills.size,
+            if (priorBills.size == 1) "" else "s"
+        )
+        textAvgBill.visibility = android.view.View.VISIBLE
     }
 
     private fun checkStoragePermission(): Boolean {
@@ -460,13 +586,13 @@ class BillResultActivity : AppCompatActivity() {
             paint.textSize = 32f
             paint.typeface = Typeface.DEFAULT
             paint.color = if (isDarkMode) Color.LTGRAY else Color.DKGRAY
-            canvas.drawText("Previous: $previousReading → Current: $currentReading", width / 2f, cardY, paint)
+            canvas.drawText("Previous: $previousReading m\u00B3 \u2192 Current: $currentReading m\u00B3", width / 2f, cardY, paint)
             cardY += 80f
 
             paint.textSize = 64f
             paint.typeface = Typeface.DEFAULT_BOLD
             paint.color = textColor
-            canvas.drawText("$usage usage", width / 2f, cardY, paint)
+            canvas.drawText("$usage m\u00B3", width / 2f, cardY, paint)
             cardY += 80f
 
             paint.textSize = 32f
@@ -504,7 +630,7 @@ class BillResultActivity : AppCompatActivity() {
                 val tierText = "$tierLabel ($tierUsage usage used)"
                 canvas.drawText(tierText, 80f, cardY, paint)
                 paint.textAlign = Paint.Align.RIGHT
-                canvas.drawText(String.format(Locale.US, "₱%.2f", tierAmount), width - 80f, cardY, paint)
+                canvas.drawText(String.format(Locale.US, "\u20B1%.2f", tierAmount), width - 80f, cardY, paint)
                 paint.textAlign = Paint.Align.LEFT
                 cardY += 50f
             }
@@ -520,7 +646,7 @@ class BillResultActivity : AppCompatActivity() {
             paint.typeface = Typeface.DEFAULT_BOLD
             canvas.drawText("Subtotal (Water)", 80f, cardY, paint)
             paint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(String.format(Locale.US, "₱%.2f", waterBill), width - 80f, cardY, paint)
+            canvas.drawText(String.format(Locale.US, "\u20B1%.2f", waterBill), width - 80f, cardY, paint)
             paint.textAlign = Paint.Align.LEFT
             cardY + 40f
         }
@@ -537,7 +663,7 @@ class BillResultActivity : AppCompatActivity() {
             paint.textSize = 36f
             canvas.drawText("ESF", 80f, cardY, paint)
             paint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(String.format(Locale.US, "₱%.2f", esfFee), width - 80f, cardY, paint)
+            canvas.drawText(String.format(Locale.US, "\u20B1%.2f", esfFee), width - 80f, cardY, paint)
             paint.textAlign = Paint.Align.LEFT
             cardY + 40f
         }
@@ -555,7 +681,7 @@ class BillResultActivity : AppCompatActivity() {
 
             paint.textSize = 72f
             paint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(String.format(Locale.US, "₱%.2f", totalBill), width - 80f, cardY, paint)
+            canvas.drawText(String.format(Locale.US, "\u20B1%.2f", totalBill), width - 80f, cardY, paint)
             paint.textAlign = Paint.Align.LEFT
             cardY + 50f
         }
@@ -714,18 +840,12 @@ class BillResultActivity : AppCompatActivity() {
             Triple(tier5Usage, tier5Amount, "41+ usage")
         )
 
-        android.util.Log.d("BillResult", "Tier breakdown data: $tierData")
-
         for ((tierUsage, amount, label) in tierData) {
-            android.util.Log.d("BillResult", "Processing tier: $label, usage: $tierUsage, amount: $amount")
             if (tierUsage > 0) {
                 val tierView = createTierView(label, tierUsage, amount)
                 containerTierBreakdown.addView(tierView)
-                android.util.Log.d("BillResult", "Added tier view for $label")
             }
         }
-
-        android.util.Log.d("BillResult", "Total tier views: ${containerTierBreakdown.childCount}")
     }
 
     private fun createTierView(label: String, usage: Int, amount: Double): CardView {
@@ -761,7 +881,7 @@ class BillResultActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 1f
             )
-            text = "$label\n$usage usage"
+            text = "$label\n$usage m\u00B3"
             setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(textColor)
         }
@@ -771,7 +891,7 @@ class BillResultActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
-            text = String.format(Locale.US, "₱%.2f", amount)
+            text = String.format(Locale.US, "\u20B1%.2f", amount)
             setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
             setTextColor(textColor)
             android.graphics.Typeface.DEFAULT_BOLD.let { typeface = it }
@@ -813,6 +933,7 @@ class BillResultActivity : AppCompatActivity() {
         )
         historyManager.updateOrAddEntry(entry)
         projectedReadingManager.recalculateProjectionsAfterHistoryChange(originalTimestamp)
+        PeriodicScanReminderScheduler.schedule(this)
         Log.d("BillResult", "History entry updated after edit: sessionId=$sessionId")
     }
     
@@ -828,7 +949,7 @@ class BillResultActivity : AppCompatActivity() {
         
         val entry = ScanHistoryEntry(
             id = sessionId,
-            timestamp = System.currentTimeMillis(),
+            timestamp = entryTimestamp, // Use scan time, not departure time
             currentReading = currentReading,
             previousReading = previousReading,
             usage = usage,
@@ -848,11 +969,12 @@ class BillResultActivity : AppCompatActivity() {
             tier5Amount = tier5Amount,
             hasComparison = false // BillResultActivity is only used when no comparison
         )
-        
+
         historyManager.updateOrAddEntry(entry)
-        
+
         // Recalculate projections from actual history data (not stale incremental updates)
-        projectedReadingManager.recalculateProjectionsAfterHistoryChange(System.currentTimeMillis())
+        projectedReadingManager.recalculateProjectionsAfterHistoryChange(entryTimestamp)
+        PeriodicScanReminderScheduler.schedule(this)
         
         historySaved = true
         Log.d("BillResult", "History saved with sessionId=$sessionId")
@@ -869,6 +991,7 @@ class BillResultActivity : AppCompatActivity() {
             .setPositiveButton("Delete") { _, _ ->
                 historyManager.deleteEntry(sessionId)
                 projectedReadingManager.recalculateProjectionsAfterHistoryChange(originalTimestamp)
+                PeriodicScanReminderScheduler.schedule(this)
                 Toast.makeText(this, "History entry deleted", Toast.LENGTH_SHORT).show()
                 finish()
             }
@@ -882,3 +1005,5 @@ class BillResultActivity : AppCompatActivity() {
         return true
     }
 }
+
+

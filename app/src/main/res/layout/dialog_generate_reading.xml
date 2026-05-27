@@ -43,7 +43,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="Previous Reading (cu.m)"
+        android:text="Previous Reading (m³)"
         android:textColor="?android:attr/textColorPrimary"
         android:textSize="14sp"
         android:textStyle="bold" />
@@ -62,7 +62,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="Current Reading (cu.m)"
+        android:text="Current Reading (m³)"
         android:textColor="?android:attr/textColorPrimary"
         android:textSize="14sp"
         android:textStyle="bold" />

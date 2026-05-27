@@ -30,11 +30,14 @@ import com.kokeshi.metersnap.data.ScanHistoryEntry
 import com.kokeshi.metersnap.data.WaterRateType
 import com.kokeshi.metersnap.data.WaterRates
 import com.kokeshi.metersnap.notifications.EndOfMonthReminderScheduler
+import com.kokeshi.metersnap.notifications.PeriodicScanReminderScheduler
 import com.kokeshi.metersnap.utils.BillCalculator
+import com.kokeshi.metersnap.utils.ChargeDateHelper
 import com.kokeshi.metersnap.utils.DeveloperOptions
 import com.kokeshi.metersnap.utils.HistoryManager
 import com.kokeshi.metersnap.utils.ProjectedReadingManager
 import com.kokeshi.metersnap.utils.RatePreferences
+import com.kokeshi.metersnap.utils.RateTableManager
 import com.kokeshi.metersnap.utils.ThemePreferences
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -44,6 +47,7 @@ import java.util.UUID
 /**
  * Activity for miscellaneous options:
  * - End-of-month reminders
+ * - Periodic scan reminders
  * - Prediction statistics
  * - Developer settings (debug strip, fake prev, generate reading)
  */
@@ -53,16 +57,20 @@ class OtherOptionsActivity : AppCompatActivity() {
     private lateinit var switchReminders: SwitchMaterial
     private lateinit var containerReminderTime: LinearLayout
     private lateinit var textReminderTime: TextView
+    private lateinit var switchPeriodicScanReminders: SwitchMaterial
+    private lateinit var containerPeriodicScanDetails: LinearLayout
+    private lateinit var textPeriodicScanInterval: TextView
+    private lateinit var textPeriodicScanTime: TextView
     private lateinit var cardPredictionStats: CardView
     private lateinit var textPredictionStats: TextView
     private lateinit var switchLightMode: SwitchMaterial
 
-    // Developer settings
     private lateinit var switchDeveloperSettings: SwitchMaterial
     private lateinit var containerDeveloperControls: LinearLayout
     private lateinit var switchDebugStrip: SwitchMaterial
     private lateinit var switchFakePrev: SwitchMaterial
     private lateinit var switchForceDualBilling: SwitchMaterial
+    private lateinit var btnScannerTuning: Button
     private lateinit var btnGenerateReading: Button
 
     private lateinit var reminderPrefs: SharedPreferences
@@ -79,15 +87,20 @@ class OtherOptionsActivity : AppCompatActivity() {
         private const val KEY_DEVELOPER_SETTINGS_ENABLED = "developer_settings_master_enabled"
     }
 
+    private var pendingNotificationPermissionAction: (() -> Unit)? = null
+    private var pendingNotificationPermissionReset: (() -> Unit)? = null
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            enableReminders()
+            pendingNotificationPermissionAction?.invoke()
         } else {
-            switchReminders.isChecked = false
+            pendingNotificationPermissionReset?.invoke()
             Toast.makeText(this, "Notification permission required for reminders", Toast.LENGTH_LONG).show()
         }
+        pendingNotificationPermissionAction = null
+        pendingNotificationPermissionReset = null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -114,16 +127,20 @@ class OtherOptionsActivity : AppCompatActivity() {
         switchReminders = findViewById(R.id.switch_reminders)
         containerReminderTime = findViewById(R.id.container_reminder_time)
         textReminderTime = findViewById(R.id.text_reminder_time)
+        switchPeriodicScanReminders = findViewById(R.id.switch_periodic_scan_reminders)
+        containerPeriodicScanDetails = findViewById(R.id.container_periodic_scan_details)
+        textPeriodicScanInterval = findViewById(R.id.text_periodic_scan_interval)
+        textPeriodicScanTime = findViewById(R.id.text_periodic_scan_time)
         cardPredictionStats = findViewById(R.id.card_prediction_stats)
         textPredictionStats = findViewById(R.id.text_prediction_stats)
         switchLightMode = findViewById(R.id.switch_light_mode)
 
-        // Developer settings
         switchDeveloperSettings = findViewById(R.id.switch_developer_settings)
         containerDeveloperControls = findViewById(R.id.container_developer_controls)
         switchDebugStrip = findViewById(R.id.switch_debug_strip)
         switchFakePrev = findViewById(R.id.switch_fake_prev)
         switchForceDualBilling = findViewById(R.id.switch_force_dual_billing)
+        btnScannerTuning = findViewById(R.id.btn_scanner_tuning)
         btnGenerateReading = findViewById(R.id.btn_generate_reading)
     }
 
@@ -154,13 +171,21 @@ class OtherOptionsActivity : AppCompatActivity() {
     }
 
     private fun loadNotificationSettings() {
-        val isEnabled = reminderPrefs.getBoolean(KEY_REMINDERS_ENABLED, false)
+        val isEnabled = reminderPrefs.getBoolean(KEY_REMINDERS_ENABLED, true)
         val hour = reminderPrefs.getInt(KEY_REMINDER_HOUR, 9)
         val minute = reminderPrefs.getInt(KEY_REMINDER_MINUTE, 0)
+        val periodicEnabled = PeriodicScanReminderScheduler.isEnabled(this)
+        val periodicInterval = PeriodicScanReminderScheduler.getIntervalDays(this)
+        val (periodicHour, periodicMinute) = PeriodicScanReminderScheduler.getReminderTime(this)
 
         switchReminders.isChecked = isEnabled
         containerReminderTime.visibility = if (isEnabled) View.VISIBLE else View.GONE
         updateReminderTimeDisplay(hour, minute)
+
+        switchPeriodicScanReminders.isChecked = periodicEnabled
+        containerPeriodicScanDetails.visibility = if (periodicEnabled) View.VISIBLE else View.GONE
+        updatePeriodicIntervalDisplay(periodicInterval)
+        updatePeriodicReminderTimeDisplay(periodicHour, periodicMinute)
     }
 
     private fun loadPredictionStats() {
@@ -203,18 +228,23 @@ class OtherOptionsActivity : AppCompatActivity() {
 
         switchReminders.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                        == PackageManager.PERMISSION_GRANTED) {
-                        enableReminders()
-                    } else {
-                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                } else {
-                    enableReminders()
-                }
+                ensureNotificationPermissionOrRun(
+                    onGranted = { enableReminders() },
+                    onDeniedReset = { switchReminders.isChecked = false }
+                )
             } else {
                 disableReminders()
+            }
+        }
+
+        switchPeriodicScanReminders.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                ensureNotificationPermissionOrRun(
+                    onGranted = { enablePeriodicScanReminders() },
+                    onDeniedReset = { switchPeriodicScanReminders.isChecked = false }
+                )
+            } else {
+                disablePeriodicScanReminders()
             }
         }
 
@@ -222,7 +252,14 @@ class OtherOptionsActivity : AppCompatActivity() {
             showTimePickerDialog()
         }
 
-        // Developer settings listeners
+        textPeriodicScanInterval.setOnClickListener {
+            showPeriodicIntervalDialog()
+        }
+
+        textPeriodicScanTime.setOnClickListener {
+            showPeriodicTimePickerDialog()
+        }
+
         switchDebugStrip.setOnCheckedChangeListener { _, isChecked ->
             devPrefs.edit().putBoolean("debug_strip_enabled", isChecked).apply()
             val status = if (isChecked) "enabled" else "disabled"
@@ -261,6 +298,10 @@ class OtherOptionsActivity : AppCompatActivity() {
             }
         }
 
+        btnScannerTuning.setOnClickListener {
+            startActivity(android.content.Intent(this, ScannerTuningActivity::class.java))
+        }
+
         btnGenerateReading.setOnClickListener {
             showGenerateReadingDialog()
         }
@@ -270,11 +311,35 @@ class OtherOptionsActivity : AppCompatActivity() {
         containerDeveloperControls.visibility = if (isEnabled) View.VISIBLE else View.GONE
     }
 
+    private fun ensureNotificationPermissionOrRun(
+        onGranted: () -> Unit,
+        onDeniedReset: () -> Unit
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingNotificationPermissionAction = onGranted
+            pendingNotificationPermissionReset = onDeniedReset
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            onGranted()
+        }
+    }
+
     private fun enableReminders() {
         reminderPrefs.edit().putBoolean(KEY_REMINDERS_ENABLED, true).apply()
         containerReminderTime.visibility = View.VISIBLE
         EndOfMonthReminderScheduler.scheduleReminders(this)
-        Toast.makeText(this, "Billing period reminders enabled", Toast.LENGTH_SHORT).show()
+        if (!ChargeDateHelper.isChargeDateSet(this)) {
+            Toast.makeText(
+                this,
+                "Reminders enabled. Note: using default day 28 — set your charge date in History & Readings to customize.",
+                Toast.LENGTH_LONG
+            ).show()
+        } else {
+            Toast.makeText(this, "Billing period reminders enabled", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun disableReminders() {
@@ -282,6 +347,18 @@ class OtherOptionsActivity : AppCompatActivity() {
         containerReminderTime.visibility = View.GONE
         EndOfMonthReminderScheduler.cancelAllReminders(this)
         Toast.makeText(this, "Reminders disabled", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun enablePeriodicScanReminders() {
+        PeriodicScanReminderScheduler.setEnabled(this, true)
+        containerPeriodicScanDetails.visibility = View.VISIBLE
+        Toast.makeText(this, "Scan check-in reminders enabled", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun disablePeriodicScanReminders() {
+        PeriodicScanReminderScheduler.setEnabled(this, false)
+        containerPeriodicScanDetails.visibility = View.GONE
+        Toast.makeText(this, "Scan check-in reminders disabled", Toast.LENGTH_SHORT).show()
     }
 
     private fun showTimePickerDialog() {
@@ -310,14 +387,80 @@ class OtherOptionsActivity : AppCompatActivity() {
         ).show()
     }
 
+    private fun showPeriodicTimePickerDialog() {
+        val (currentHour, currentMinute) = PeriodicScanReminderScheduler.getReminderTime(this)
+
+        TimePickerDialog(
+            this,
+            { _, hourOfDay, minute ->
+                PeriodicScanReminderScheduler.setReminderTime(this, hourOfDay, minute)
+                updatePeriodicReminderTimeDisplay(hourOfDay, minute)
+                Toast.makeText(this, "Scan reminder time updated", Toast.LENGTH_SHORT).show()
+            },
+            currentHour,
+            currentMinute,
+            false
+        ).show()
+    }
+
+    private fun showPeriodicIntervalDialog() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(PeriodicScanReminderScheduler.getIntervalDays(this@OtherOptionsActivity).toString())
+            setSelection(text.length)
+        }
+
+        val container = FrameLayout(this).apply {
+            val params = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+            val margin = (16 * resources.displayMetrics.density).toInt()
+            params.leftMargin = margin
+            params.rightMargin = margin
+            input.layoutParams = params
+            addView(input)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Scan Reminder Interval")
+            .setMessage("Choose how many days to wait before reminding you again if you still have not scanned this billing period.")
+            .setView(container)
+            .setPositiveButton("Save") { _, _ ->
+                val days = input.text.toString().toIntOrNull()
+                if (days == null) {
+                    Toast.makeText(this, "Enter a valid number of days", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+
+                PeriodicScanReminderScheduler.setIntervalDays(this, days)
+                updatePeriodicIntervalDisplay(PeriodicScanReminderScheduler.getIntervalDays(this))
+                Toast.makeText(this, "Scan reminder interval updated", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun updateReminderTimeDisplay(hour: Int, minute: Int) {
+        textReminderTime.text = formatTime(hour, minute)
+    }
+
+    private fun updatePeriodicReminderTimeDisplay(hour: Int, minute: Int) {
+        textPeriodicScanTime.text = formatTime(hour, minute)
+    }
+
+    private fun updatePeriodicIntervalDisplay(days: Int) {
+        textPeriodicScanInterval.text = if (days == 1) "Every 1 day" else "Every $days days"
+    }
+
+    private fun formatTime(hour: Int, minute: Int): String {
         val amPm = if (hour < 12) "AM" else "PM"
         val displayHour = when {
             hour == 0 -> 12
             hour > 12 -> hour - 12
             else -> hour
         }
-        textReminderTime.text = String.format(Locale.US, "%d:%02d %s", displayHour, minute, amPm)
+        return String.format(Locale.US, "%d:%02d %s", displayHour, minute, amPm)
     }
 
     /**
@@ -331,7 +474,6 @@ class OtherOptionsActivity : AppCompatActivity() {
         val editPreviousReading = dialogView.findViewById<EditText>(R.id.edit_previous_reading)
         val editCurrentReading = dialogView.findViewById<EditText>(R.id.edit_current_reading)
 
-        // Default to today
         val selectedCalendar = Calendar.getInstance()
         val dateFormat = SimpleDateFormat("MMMM d, yyyy", Locale.getDefault())
         textSelectedDate.text = dateFormat.format(selectedCalendar.time)
@@ -378,21 +520,38 @@ class OtherOptionsActivity : AppCompatActivity() {
     private fun generateFakeReading(calendar: Calendar, previousReading: Int, currentReading: Int) {
         val usage = currentReading - previousReading
 
-        // Calculate bill using current rate settings
         val ratePreferences = RatePreferences(this)
         val rateType = ratePreferences.getRateType()
         val customRates = ratePreferences.getCustomRates()
-        val esfRate = if (rateType == WaterRateType.CUSTOM) {
-            ratePreferences.getESFRate()
+
+        val billResult: BillCalculator.BillResult = if (rateType == WaterRateType.CUSTOM) {
+            val esfRate = ratePreferences.getESFRate()
+            BillCalculator.calculateBill(
+                usage = usage,
+                rateType = rateType,
+                customRates = customRates,
+                esfRate = esfRate
+            )
         } else {
-            WaterRates.getESFForType(rateType)
+            val rateTableManager = RateTableManager(this)
+            val serviceType = rateTableManager.getServiceType(rateType.name)
+            if (serviceType != null) {
+                BillCalculator.calculateBillDynamic(
+                    usage = usage,
+                    serviceType = serviceType,
+                    esfRate = rateTableManager.getEsfRate()
+                )
+            } else {
+                val esfRate = WaterRates.getESFForType(rateType)
+                BillCalculator.calculateBill(
+                    usage = usage,
+                    rateType = rateType,
+                    customRates = customRates,
+                    esfRate = esfRate
+                )
+            }
         }
 
-        val billResult = BillCalculator.calculateBill(
-            usage = usage, rateType = rateType, customRates = customRates, esfRate = esfRate
-        )
-
-        // Set time to noon for the selected date
         calendar.set(Calendar.HOUR_OF_DAY, 12)
         calendar.set(Calendar.MINUTE, 0)
         calendar.set(Calendar.SECOND, 0)
@@ -420,6 +579,8 @@ class OtherOptionsActivity : AppCompatActivity() {
         )
 
         historyManager.addScanEntry(fakeEntry)
+        projectedReadingManager.recalculateProjectionsAfterHistoryChange(calendar.timeInMillis)
+        PeriodicScanReminderScheduler.schedule(this)
 
         val dateFormatDisplay = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
         Toast.makeText(

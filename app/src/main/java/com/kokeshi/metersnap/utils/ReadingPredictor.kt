@@ -98,27 +98,29 @@ class ReadingPredictor(context: Context) {
      * @param month The month (1-12, where 1 = January)
      * @return ProjectedReading or null if prediction is impossible
      */
-    fun predictMonthEndReading(year: Int, month: Int): ProjectedReading? {
+    fun predictMonthEndReading(year: Int, month: Int, previousReadingOverride: Int? = null): ProjectedReading? {
         val monthYear = String.format("%04d-%02d", year, month)
-        Log.d(TAG, "Predicting end-of-month reading for $monthYear")
-        
+        Log.d(TAG, "Predicting end-of-month reading for $monthYear${if (previousReadingOverride != null) " (override baseline=$previousReadingOverride)" else ""}")
+
         // Get readings for this month
         val monthReadings = getReadingsForMonth(year, month)
         Log.d(TAG, "Found ${monthReadings.size} readings for $monthYear")
-        
+
         if (monthReadings.isEmpty()) {
             Log.w(TAG, "No readings available for $monthYear, trying previous months")
             return predictUsingPreviousMonths(year, month)
         }
-        
+
         // Get the last actual reading
         val lastReading = monthReadings.maxByOrNull { it.timestamp }!!
-        
+
         // Calculate the last day of month timestamp (11:59:59 PM)
         val lastDayTimestamp = getMonthEndTimestamp(year, month)
-        
-        // TRY SMART APPROACH FIRST: Use month baseline (previous reading) if available
-        val previousReading = getPreviousMonthReading(year, month)
+
+        // TRY SMART APPROACH FIRST: Use month baseline (previous reading) if available.
+        // Allow caller to supply a different baseline (e.g., App's own previous-month projection)
+        // so that CWD and App projections can be calculated independently.
+        val previousReading = previousReadingOverride ?: getPreviousMonthReading(year, month)
         if (previousReading != null && previousReading < lastReading.currentReading) {
             Log.d(TAG, "Using SMART month-baseline approach: previous=$previousReading, current=${lastReading.currentReading}")
             return predictUsingMonthBaseline(
@@ -271,27 +273,31 @@ class ReadingPredictor(context: Context) {
      * Get the previous reading (from end of previous month or user's manual input)
      */
     private fun getPreviousMonthReading(year: Int, month: Int): Int? {
-        // First, try to get from SharedPreferences (user's manual "previous reading" setting)
-        val prefs = context.getSharedPreferences("MeterSnapPrefs", android.content.Context.MODE_PRIVATE)
-        val manualPrevReading = prefs.getInt("previous_reading", -1)
-        
-        if (manualPrevReading != -1) {
-            Log.d(TAG, "Using manual previous reading from SharedPreferences: $manualPrevReading")
-            return manualPrevReading
+        // Only use the manually-stored previous reading when predicting the *current* billing
+        // period. For past months (e.g., recalculating a January projection while in March),
+        // using the March baseline gives a completely wrong result — fall through to history.
+        val (currentYear, currentMonth) = getCurrentMonthYear()
+        if (year == currentYear && month == currentMonth) {
+            val prefs = context.getSharedPreferences("MeterSnapPrefs", android.content.Context.MODE_PRIVATE)
+            val manualPrevReading = prefs.getInt("previous_reading", -1)
+            if (manualPrevReading != -1) {
+                Log.d(TAG, "Using manual previous reading from SharedPreferences: $manualPrevReading")
+                return manualPrevReading
+            }
         }
-        
-        // Fallback: Try to get the last scan from previous month
+
+        // Fallback: use the last scan from the preceding month's history
         val prevMonth = if (month == 1) 12 else month - 1
         val prevYear = if (month == 1) year - 1 else year
         val prevMonthReadings = getReadingsForMonth(prevYear, prevMonth)
-        
+
         if (prevMonthReadings.isNotEmpty()) {
             val lastPrevMonthReading = prevMonthReadings.maxByOrNull { it.timestamp }!!.currentReading
             Log.d(TAG, "Using last reading from previous month: $lastPrevMonthReading")
             return lastPrevMonthReading
         }
-        
-        Log.d(TAG, "No previous reading available")
+
+        Log.d(TAG, "No previous reading available for $year-$month")
         return null
     }
     
@@ -605,7 +611,7 @@ class ReadingPredictor(context: Context) {
             val key: String
             val entryYear: Int
             val entryMonth: Int
-            
+
             if (chargeDateSet) {
                 val periodKey = ChargeDateHelper.getBillingPeriodKey(entry.timestamp, chargeDate)
                 val parts = periodKey.split("-")
@@ -618,11 +624,17 @@ class ReadingPredictor(context: Context) {
                 entryMonth = calendar.get(Calendar.MONTH) + 1
                 key = "$entryYear-$entryMonth"
             }
-            
+
             // Skip excluded month
             if (excludeYear == entryYear && excludeMonth == entryMonth) continue
-            
-            monthlyUsages[key] = (monthlyUsages[key] ?: 0) + entry.usage
+
+            // entry.usage is cumulative from the period start (currentReading - baseline),
+            // so we must NOT sum across entries — each scan already represents total period
+            // usage up to that point. Use the maximum (most recent) value per period instead.
+            val existing = monthlyUsages[key] ?: 0
+            if (entry.usage > existing) {
+                monthlyUsages[key] = entry.usage
+            }
         }
         
         if (monthlyUsages.isEmpty()) {
@@ -744,5 +756,32 @@ class ReadingPredictor(context: Context) {
     fun predictCurrentMonthEndReading(): ProjectedReading? {
         val (year, month) = getCurrentMonthYear()
         return predictMonthEndReading(year, month)
+    }
+
+    /**
+     * Returns thresholds above which a billing-period usage value is considered implausible.
+     *
+     * Two tiers:
+     * - [hardCap] — 200 m³: physically unreasonable for a residential account in one period.
+     *   This fires regardless of history.
+     * - [dynamicThreshold] — 3× the household's own historical monthly average. Only set when
+     *   there is enough history to compute a meaningful average (> 5 m³/month). When set, this
+     *   will fire well below 200 for a typical household (e.g., avg 25 m³ → threshold 75 m³).
+     *   Null means insufficient history.
+     *
+     * @return Pair(dynamicThreshold: Int?, hardCap: Int)
+     */
+    fun getUsagePlausibilityThresholds(): Pair<Int?, Int> {
+        // Align with ReadingValidator.HIGH_USAGE_WARNING_THRESHOLD so OCR and billing
+        // validation both agree on what constitutes "high but worth flagging."
+        val hardCap = ReadingValidator.HIGH_USAGE_WARNING_THRESHOLD
+        val avgDailyUsage = getHistoricalAverageDailyUsage()
+        val avgMonthlyUsage = (avgDailyUsage * 30.0).toInt()
+
+        // Require at least 5 m³/month average before applying a dynamic threshold —
+        // very low averages (vacant properties, infrequent use) would produce false positives.
+        val dynamicThreshold = if (avgMonthlyUsage > 5) avgMonthlyUsage * 3 else null
+
+        return Pair(dynamicThreshold, hardCap)
     }
 }

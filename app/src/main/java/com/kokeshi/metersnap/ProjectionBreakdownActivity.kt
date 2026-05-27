@@ -11,6 +11,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.kokeshi.metersnap.data.ScanHistoryEntry
+import com.kokeshi.metersnap.utils.ChargeDateHelper
 import com.kokeshi.metersnap.utils.HistoryManager
 import java.text.SimpleDateFormat
 import java.util.*
@@ -115,14 +116,21 @@ class ProjectionBreakdownActivity : AppCompatActivity() {
             append("\nMethod:  $method")
         }
 
-        // Collect scan points for this billing month
+        // Collect scan points for this billing month (billing period key when charge date is set)
+        val chargeDate = intent.getIntExtra("EXTRA_CHARGE_DATE", 0)
         val monthEntries = historyManager.getAllHistory()
-            .filter { getMonthKey(it.timestamp) == monthYear }
+            .filter { entry ->
+                if (chargeDate > 0) {
+                    ChargeDateHelper.getBillingPeriodKey(entry.timestamp, chargeDate) == monthYear
+                } else {
+                    getMonthKey(entry.timestamp) == monthYear
+                }
+            }
             .sortedBy { it.timestamp }
 
         // Build the chart once the view is laid out and has dimensions
         chartCanvas.post {
-            drawChart(chartCanvas, previousReading, monthEntries, projectedInt, projectedReading)
+            drawChart(chartCanvas, previousReading, monthEntries, projectedInt, projectedReading, monthYear, chargeDate)
         }
     }
 
@@ -133,7 +141,9 @@ class ProjectionBreakdownActivity : AppCompatActivity() {
         baseline: Int,
         entries: List<ScanHistoryEntry>,
         projectedInt: Int,
-        projectedDouble: Double
+        projectedDouble: Double,
+        monthYear: String = "",
+        chargeDate: Int = 0
     ) {
         val w = view.width
         val h = view.height
@@ -170,23 +180,35 @@ class ProjectionBreakdownActivity : AppCompatActivity() {
         val firstTimestamp: Long
         val lastTimestamp: Long
 
-        if (entries.isNotEmpty()) {
-            // Use earliest entry date to set the month boundaries
-            cal.timeInMillis = entries.first().timestamp
+        if (chargeDate > 0 && monthYear.isNotEmpty()) {
+            // Use billing period boundaries so X-axis matches the actual billing cycle
+            val pStart = ChargeDateHelper.getBillingPeriodStartTimestamp(monthYear, chargeDate)
+            val pEnd = ChargeDateHelper.getBillingPeriodEndTimestamp(monthYear, chargeDate)
+            if (pStart > 0L && pEnd > 0L) {
+                firstTimestamp = pStart
+                lastTimestamp = pEnd
+            } else {
+                // Fallback to calendar month
+                if (entries.isNotEmpty()) cal.timeInMillis = entries.first().timestamp
+                else cal.timeInMillis = System.currentTimeMillis()
+                cal.set(Calendar.DAY_OF_MONTH, 1); cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0)
+                firstTimestamp = cal.timeInMillis
+                cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+                cal.set(Calendar.HOUR_OF_DAY, 23); cal.set(Calendar.MINUTE, 59); cal.set(Calendar.SECOND, 59)
+                lastTimestamp = cal.timeInMillis
+            }
         } else {
-            cal.timeInMillis = System.currentTimeMillis()
+            // No charge date — fall back to calendar month
+            if (entries.isNotEmpty()) cal.timeInMillis = entries.first().timestamp
+            else cal.timeInMillis = System.currentTimeMillis()
+            cal.set(Calendar.DAY_OF_MONTH, 1); cal.set(Calendar.HOUR_OF_DAY, 0)
+            cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0)
+            firstTimestamp = cal.timeInMillis
+            cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+            cal.set(Calendar.HOUR_OF_DAY, 23); cal.set(Calendar.MINUTE, 59); cal.set(Calendar.SECOND, 59)
+            lastTimestamp = cal.timeInMillis
         }
-        cal.set(Calendar.DAY_OF_MONTH, 1)
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        firstTimestamp = cal.timeInMillis
-
-        cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
-        cal.set(Calendar.HOUR_OF_DAY, 23)
-        cal.set(Calendar.MINUTE, 59)
-        cal.set(Calendar.SECOND, 59)
-        lastTimestamp = cal.timeInMillis
 
         val totalSpanMs = (lastTimestamp - firstTimestamp).toFloat().coerceAtLeast(1f)
 

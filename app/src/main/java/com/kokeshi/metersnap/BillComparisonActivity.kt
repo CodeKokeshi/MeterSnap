@@ -47,6 +47,8 @@ import com.kokeshi.metersnap.data.DualBillComparison
 import com.kokeshi.metersnap.data.ScanHistoryEntry
 import com.kokeshi.metersnap.data.TierBreakdownDisplay
 import com.kokeshi.metersnap.data.WaterRateType
+import com.kokeshi.metersnap.data.WaterRates
+import com.kokeshi.metersnap.notifications.PeriodicScanReminderScheduler
 import com.kokeshi.metersnap.utils.BillCalculator
 import com.kokeshi.metersnap.utils.DeveloperOptions
 import com.kokeshi.metersnap.utils.HistoryManager
@@ -92,6 +94,8 @@ class BillComparisonActivity : AppCompatActivity() {
     private var sessionId: String = UUID.randomUUID().toString()
     private var historySaved: Boolean = false
     private var originalTimestamp: Long = 0L
+    // Recorded at onCreate so history timestamp reflects scan time, not departure time
+    private var entryTimestamp: Long = 0L
     
     private lateinit var dualComparison: DualBillComparison
     private lateinit var billPagerAdapter: BillPagerAdapter
@@ -107,6 +111,7 @@ class BillComparisonActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_bill_comparison)
         
+        entryTimestamp = System.currentTimeMillis()
         initializeManagers()
         initializeViews()
         setupToolbar()
@@ -362,13 +367,20 @@ class BillComparisonActivity : AppCompatActivity() {
             description = "Based on CWD's previous reading from your bill"
         )
         
-        // Calculate App-predicted bill (if available)
+        // Calculate App-predicted bill only when the projection is actually BELOW the current
+        // reading. If the projection overshot (predictedPrev >= currentReading), the bill would
+        // be calculated on zero usage and show â‚±0, which is misleading. Suppress the tab instead.
         val appBill = appPredictedPreviousReading?.let { predictedPrev ->
-            calculateBillForPreviousReading(
-                previousReading = predictedPrev,
-                source = BillSource.APP_PREDICTED,
-                description = "Based on app's end-of-month prediction"
-            )
+            if (predictedPrev >= currentReading) {
+                Log.d(TAG, "App projection ($predictedPrev) >= current reading ($currentReading) - suppressing app comparison tab")
+                null
+            } else {
+                calculateBillForPreviousReading(
+                    previousReading = predictedPrev,
+                    source = BillSource.APP_PREDICTED,
+                    description = "Based on app's end-of-month prediction"
+                )
+            }
         }
         
         dualComparison = DualBillComparison.create(cwdBill, appBill)
@@ -407,7 +419,8 @@ class BillComparisonActivity : AppCompatActivity() {
                     esfRate = rateTableManager.getEsfRate()
                 )
             } else {
-                val esfRate = ratePreferences.getESFRate()
+                // Fallback: use standard ESF for this rate type, not the user's custom ESF setting
+                val esfRate = WaterRates.getESFForType(rateTypeEnum)
                 val customRates = ratePreferences.getCustomRates()
                 BillCalculator.calculateBill(
                     usage = usage,
@@ -455,6 +468,22 @@ class BillComparisonActivity : AppCompatActivity() {
             sourceDescription = description
         )
     }
+
+    private fun buildDifferenceExplanation(comparison: DualBillComparison): String {
+        val appBill = comparison.appPredictedBill ?: return ""
+        val usageDelta = appBill.usage - comparison.cwdBill.usage
+        val usageDeltaText = when {
+            usageDelta > 0 -> "$usageDelta more m\u00B3 of usage"
+            usageDelta < 0 -> "${-usageDelta} less m\u00B3 of usage"
+            else -> "the same usage"
+        }
+
+        return "The CWD reading gives ${formatCurrency(comparison.cwdBill.totalBill)} because it uses your actual previous reading of ${comparison.cwdBill.previousReading} m\u00B3. " +
+            "The App reading gives ${formatCurrency(appBill.totalBill)} because the app predicted the previous month ended at ${appBill.previousReading} m\u00B3, which means $usageDeltaText."
+    }
+
+    private fun formatCurrency(amount: Double): String =
+        String.format(Locale.US, "\u20B1%.2f", amount)
 
     private fun setupViewPager() {
         billPagerAdapter = BillPagerAdapter(
@@ -633,13 +662,13 @@ class BillComparisonActivity : AppCompatActivity() {
             paint.textSize = 32f
             paint.typeface = Typeface.DEFAULT
             paint.color = if (isDarkMode) Color.LTGRAY else Color.DKGRAY
-            canvas.drawText("Previous: ${bill.previousReading} → Current: ${bill.currentReading}", width / 2f, cardY, paint)
+            canvas.drawText("Previous: ${bill.previousReading} m\u00B3 \u2192 Current: ${bill.currentReading} m\u00B3", width / 2f, cardY, paint)
             cardY += 80f
 
             paint.textSize = 64f
             paint.typeface = Typeface.DEFAULT_BOLD
             paint.color = textColor
-            canvas.drawText("${bill.usage} cu.m.", width / 2f, cardY, paint)
+            canvas.drawText("${bill.usage} m\u00B3", width / 2f, cardY, paint)
             cardY += 80f
 
             paint.textSize = 32f
@@ -667,10 +696,10 @@ class BillComparisonActivity : AppCompatActivity() {
             paint.textSize = 32f
             paint.typeface = Typeface.DEFAULT
             for (tier in tierData) {
-                val tierText = "${tier.tierLabel}${if (tier.isMinimumCharge) " (Min)" else ""}: ${tier.usageInTier} cu.m."
+                val tierText = "${tier.tierLabel}${if (tier.isMinimumCharge) " (Min)" else ""}: ${tier.usageInTier} m\u00B3"
                 canvas.drawText(tierText, 80f, cardY, paint)
                 paint.textAlign = Paint.Align.RIGHT
-                canvas.drawText(String.format(Locale.US, "₱%.2f", tier.amount), width - 80f, cardY, paint)
+                canvas.drawText(String.format(Locale.US, "\u20B1%.2f", tier.amount), width - 80f, cardY, paint)
                 paint.textAlign = Paint.Align.LEFT
                 cardY += 50f
             }
@@ -684,7 +713,7 @@ class BillComparisonActivity : AppCompatActivity() {
             paint.typeface = Typeface.DEFAULT_BOLD
             canvas.drawText("Subtotal (Water)", 80f, cardY, paint)
             paint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(String.format(Locale.US, "₱%.2f", bill.waterBill), width - 80f, cardY, paint)
+            canvas.drawText(String.format(Locale.US, "\u20B1%.2f", bill.waterBill), width - 80f, cardY, paint)
             paint.textAlign = Paint.Align.LEFT
             cardY + 40f
         }
@@ -701,7 +730,7 @@ class BillComparisonActivity : AppCompatActivity() {
             paint.textSize = 36f
             canvas.drawText("ESF", 80f, cardY, paint)
             paint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(String.format(Locale.US, "₱%.2f", bill.esfFee), width - 80f, cardY, paint)
+            canvas.drawText(String.format(Locale.US, "\u20B1%.2f", bill.esfFee), width - 80f, cardY, paint)
             paint.textAlign = Paint.Align.LEFT
             cardY + 40f
         }
@@ -718,7 +747,7 @@ class BillComparisonActivity : AppCompatActivity() {
 
             paint.textSize = 72f
             paint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(String.format(Locale.US, "₱%.2f", bill.totalBill), width - 80f, cardY, paint)
+            canvas.drawText(String.format(Locale.US, "\u20B1%.2f", bill.totalBill), width - 80f, cardY, paint)
             paint.textAlign = Paint.Align.LEFT
             cardY + 50f
         }
@@ -812,6 +841,7 @@ class BillComparisonActivity : AppCompatActivity() {
         val entry = createDualHistoryEntry()
         historyManager.updateOrAddEntry(entry)
         projectedReadingManager.recalculateProjectionsAfterHistoryChange(originalTimestamp)
+        PeriodicScanReminderScheduler.schedule(this)
         Log.d(TAG, "History entry updated after edit: sessionId=$sessionId")
     }
     
@@ -826,6 +856,7 @@ class BillComparisonActivity : AppCompatActivity() {
             .setPositiveButton("Delete") { _, _ ->
                 historyManager.deleteEntry(sessionId)
                 projectedReadingManager.recalculateProjectionsAfterHistoryChange(originalTimestamp)
+                PeriodicScanReminderScheduler.schedule(this)
                 Toast.makeText(this, "History entry deleted", Toast.LENGTH_SHORT).show()
                 finish()
             }
@@ -848,8 +879,9 @@ class BillComparisonActivity : AppCompatActivity() {
         historyManager.updateOrAddEntry(entry)
         
         // Recalculate projections from actual history data (not stale incremental updates)
-        projectedReadingManager.recalculateProjectionsAfterHistoryChange(System.currentTimeMillis())
-        
+        projectedReadingManager.recalculateProjectionsAfterHistoryChange(entryTimestamp)
+        PeriodicScanReminderScheduler.schedule(this)
+
         historySaved = true
         Log.d(TAG, "History saved with sessionId=$sessionId")
     }
@@ -863,8 +895,8 @@ class BillComparisonActivity : AppCompatActivity() {
         val appBill = dualComparison.appPredictedBill
         val hasComparison = dualComparison.hasPrediction && appBill != null
         
-        // Use original timestamp when editing from history, otherwise use current time
-        val entryTimestamp = if (isFromHistory && originalTimestamp > 0L) originalTimestamp else System.currentTimeMillis()
+        // Use original timestamp when editing from history, otherwise use scan-time timestamp
+        val entryTimestamp = if (isFromHistory && originalTimestamp > 0L) originalTimestamp else this.entryTimestamp
         
         return ScanHistoryEntry(
             id = sessionId, // Use session ID for update tracking
@@ -910,30 +942,6 @@ class BillComparisonActivity : AppCompatActivity() {
         )
     }
     
-    private fun createHistoryEntry(bill: BillCalculationResult): ScanHistoryEntry {
-        return ScanHistoryEntry(
-            id = UUID.randomUUID().toString(),
-            timestamp = System.currentTimeMillis(),
-            currentReading = bill.currentReading,
-            previousReading = bill.previousReading,
-            usage = bill.usage,
-            rateType = bill.rateType,
-            waterBill = bill.waterBill,
-            esfFee = bill.esfFee,
-            totalBill = bill.totalBill,
-            tier1Usage = bill.tierBreakdown.getOrNull(0)?.usageInTier ?: 0,
-            tier1Amount = bill.tierBreakdown.getOrNull(0)?.amount ?: 0.0,
-            tier2Usage = bill.tierBreakdown.getOrNull(1)?.usageInTier ?: 0,
-            tier2Amount = bill.tierBreakdown.getOrNull(1)?.amount ?: 0.0,
-            tier3Usage = bill.tierBreakdown.getOrNull(2)?.usageInTier ?: 0,
-            tier3Amount = bill.tierBreakdown.getOrNull(2)?.amount ?: 0.0,
-            tier4Usage = bill.tierBreakdown.getOrNull(3)?.usageInTier ?: 0,
-            tier4Amount = bill.tierBreakdown.getOrNull(3)?.amount ?: 0.0,
-            tier5Usage = bill.tierBreakdown.getOrNull(4)?.usageInTier ?: 0,
-            tier5Amount = bill.tierBreakdown.getOrNull(4)?.amount ?: 0.0
-        )
-    }
-    
     private fun showEditCurrentReadingDialog() {
         val builder = AlertDialog.Builder(this)
         builder.setTitle("Edit Current Reading")
@@ -967,7 +975,7 @@ class BillComparisonActivity : AppCompatActivity() {
             
             val minPrevious = minOf(cwdPreviousReading, appPredictedPreviousReading ?: cwdPreviousReading)
             if (newReading < minPrevious) {
-                Toast.makeText(this, "Current reading must be ≥ previous ($minPrevious)", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Current reading must be \u2265 previous ($minPrevious)", Toast.LENGTH_LONG).show()
                 return@setPositiveButton
             }
             
@@ -1044,6 +1052,10 @@ class BillComparisonActivity : AppCompatActivity() {
             private val cardDifference: CardView = itemView.findViewById(R.id.card_difference)
             private val textUsageDifference: TextView = itemView.findViewById(R.id.text_usage_difference)
             private val textBillDifference: TextView = itemView.findViewById(R.id.text_bill_difference)
+            private val cardExplanation: CardView = itemView.findViewById(R.id.card_explanation)
+            private val containerExplanationHeader: View = itemView.findViewById(R.id.container_explanation_header)
+            private val textExplanationToggle: TextView = itemView.findViewById(R.id.text_explanation_toggle)
+            private val textExplanationBody: TextView = itemView.findViewById(R.id.text_explanation_body)
             
             fun bind(bill: BillCalculationResult, showDifference: Boolean, comparison: DualBillComparison) {
                 // Source badge
@@ -1075,9 +1087,9 @@ class BillComparisonActivity : AppCompatActivity() {
                 }
                 
                 // Readings
-                textPreviousReading.text = bill.previousReading.toString()
-                textCurrentReading.text = bill.currentReading.toString()
-                textUsage.text = "${bill.usage} cu.m."
+                textPreviousReading.text = "${bill.previousReading} m\u00B3"
+                textCurrentReading.text = "${bill.currentReading} m\u00B3"
+                textUsage.text = "${bill.usage} m\u00B3"
                 
                 // Rate type display name
                 textRateTypeName.text = bill.rateType.replace("_", " ").lowercase()
@@ -1094,9 +1106,9 @@ class BillComparisonActivity : AppCompatActivity() {
                 }
                 
                 // Totals
-                textWaterBill.text = String.format(Locale.US, "₱%.2f", bill.waterBill)
-                textEsfFee.text = String.format(Locale.US, "₱%.2f", bill.esfFee)
-                textTotalBill.text = String.format(Locale.US, "₱%.2f", bill.totalBill)
+                textWaterBill.text = String.format(Locale.US, "\u20B1%.2f", bill.waterBill)
+                textEsfFee.text = String.format(Locale.US, "\u20B1%.2f", bill.esfFee)
+                textTotalBill.text = String.format(Locale.US, "\u20B1%.2f", bill.totalBill)
                 
                 // Difference card (only for predicted page)
                 if (showDifference) {
@@ -1111,8 +1123,18 @@ class BillComparisonActivity : AppCompatActivity() {
                         else -> ContextCompat.getColor(itemView.context, android.R.color.darker_gray)
                     }
                     textBillDifference.setTextColor(diffColor)
+                    cardExplanation.visibility = View.VISIBLE
+                    textExplanationBody.text = buildDifferenceExplanation(comparison)
+                    textExplanationBody.visibility = View.GONE
+                    textExplanationToggle.text = "Show"
+                    containerExplanationHeader.setOnClickListener {
+                        val expanded = textExplanationBody.visibility == View.VISIBLE
+                        textExplanationBody.visibility = if (expanded) View.GONE else View.VISIBLE
+                        textExplanationToggle.text = if (expanded) "Show" else "Hide"
+                    }
                 } else {
                     cardDifference.visibility = View.GONE
+                    cardExplanation.visibility = View.GONE
                 }
             }
             
@@ -1132,14 +1154,14 @@ class BillComparisonActivity : AppCompatActivity() {
                     text = buildString {
                         append(tier.tierLabel)
                         if (tier.isMinimumCharge) append(" (Min)")
-                        append(": ${tier.usageInTier} cu.m.")
+                        append(": ${tier.usageInTier} m\u00B3")
                     }
                     setTextColor(ContextCompat.getColor(context, android.R.color.darker_gray))
                     textSize = 14f
                 }
                 
                 val amountText = TextView(itemView.context).apply {
-                    text = String.format(Locale.US, "₱%.2f", tier.amount)
+                    text = String.format(Locale.US, "\u20B1%.2f", tier.amount)
                     setTextColor(ContextCompat.getColor(context, android.R.color.darker_gray))
                     textSize = 14f
                 }
@@ -1151,3 +1173,4 @@ class BillComparisonActivity : AppCompatActivity() {
         }
     }
 }
+

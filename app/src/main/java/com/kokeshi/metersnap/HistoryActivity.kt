@@ -109,17 +109,7 @@ class HistoryActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
         supportActionBar?.title = if (viewingArchive) "Session History" else "History Logs"
-
-        ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
-            val statusBarInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(
-                view.paddingLeft,
-                statusBarInsets.top,
-                view.paddingRight,
-                view.paddingBottom
-            )
-            windowInsets
-        }
+        // Window insets for the toolbar are applied in setupWindowInsets()
     }
 
     override fun onSupportNavigateUp(): Boolean {
@@ -201,8 +191,11 @@ class HistoryActivity : AppCompatActivity() {
                 displayFormat.format(calendar.time)
             }
             
-            // Calculate month summary
-            val totalUsage = entries.sumOf { it.usage }
+            // Calculate month summary.
+            // History entries store cumulative usage from the period baseline, so
+            // summing them would double-count every intermediate scan. The correct
+            // period total is the highest usage value in the group (the latest scan).
+            val totalUsage = entries.maxOfOrNull { it.usage } ?: 0
             val scanCount = entries.size
             
             items.add(HistoryListItem.Header(
@@ -280,8 +273,7 @@ class HistoryActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("Clear $monthDisplay?")
             .setMessage(
-                "This will archive your current session, then clear entries for $monthDisplay from active history.\n\n" +
-                    "Archived session can be viewed in:\nSettings > History and Readings > Session Logs"
+                "This will clear entries for $monthDisplay from active history.\n\nThis action cannot be undone."
             )
             .setPositiveButton("Clear Month") { _, _ ->
                 clearMonthHistory(monthKey)
@@ -292,7 +284,6 @@ class HistoryActivity : AppCompatActivity() {
     }
     
     private fun clearMonthHistory(monthKey: String) {
-        sessionLogManager.archiveCurrentSession("clear_period_history")
         val chargeDateSet = ChargeDateHelper.isChargeDateSet(this)
         if (chargeDateSet) {
             val chargeDate = ChargeDateHelper.getChargeDate(this)
@@ -304,7 +295,7 @@ class HistoryActivity : AppCompatActivity() {
         projectedReadingManager.recalculateProjectionForMonthKey(monthKey)
         projectedReadingManager.updateCurrentMonthProjection()
         loadHistory()
-        Toast.makeText(this, "Period cleared. Backup saved in Session Logs", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Period cleared", Toast.LENGTH_SHORT).show()
     }
 
     private fun showRestoreSessionDialog() {
@@ -474,7 +465,7 @@ class HistoryActivity : AppCompatActivity() {
             ) {
                 textMonthHeader.text = header.monthDisplay
                 val scanText = if (header.scanCount == 1) "1 scan" else "${header.scanCount} scans"
-                textMonthSummary.text = "$scanText • Total usage: ${header.totalUsage} m³"
+                textMonthSummary.text = "$scanText \u2022 Total usage: ${header.totalUsage} m\u00B3"
 
                 if (showClearMonthAction) {
                     btnClearMonth.visibility = View.VISIBLE
@@ -499,8 +490,8 @@ class HistoryActivity : AppCompatActivity() {
                 val dateFormat = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault())
                 textDate.text = dateFormat.format(Date(entry.timestamp))
                 
-                textUsage.text = "${entry.usage} m³"
-                textReading.text = "${entry.previousReading} → ${entry.currentReading}"
+                textUsage.text = "${entry.usage} m\u00B3"
+                textReading.text = "${entry.previousReading} m\u00B3 \u2192 ${entry.currentReading} m\u00B3"
                 textTotalBill.text = entry.getFormattedTotalBill()
 
                 cardView.setOnClickListener {

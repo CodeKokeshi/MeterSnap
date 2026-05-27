@@ -78,6 +78,12 @@
             android:exported="false"
             android:parentActivityName=".SettingsActivity"
             android:theme="@style/Theme.MeterSnap" />
+
+        <activity
+            android:name=".ScannerTuningActivity"
+            android:exported="false"
+            android:parentActivityName=".OtherOptionsActivity"
+            android:theme="@style/Theme.MeterSnap" />
         
         <activity
             android:name=".BillComparisonActivity"
@@ -101,6 +107,15 @@
             </intent-filter>
         </receiver>
         
+        <!-- Periodic scan reminder broadcast receiver -->
+        <receiver
+            android:name=".notifications.PeriodicScanReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.kokeshi.metersnap.ACTION_PERIODIC_SCAN_REMINDER" />
+            </intent-filter>
+        </receiver>
+
         <!-- Boot completed receiver to reschedule alarms -->
         <receiver
             android:name=".notifications.BootCompletedReceiver"

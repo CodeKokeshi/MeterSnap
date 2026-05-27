@@ -19,7 +19,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Environmental Service Fee per cubic meter"
+        android:text="Environmental Service Fee per m³"
         android:textColor="?android:attr/textColorSecondary"
         android:textSize="14sp"
         android:gravity="center"

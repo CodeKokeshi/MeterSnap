@@ -1,4 +1,4 @@
-package com.kokeshi.metersnap
+﻿package com.kokeshi.metersnap
 
 import android.content.Intent
 import android.os.Bundle
@@ -54,6 +54,11 @@ class SessionLogsActivity : AppCompatActivity() {
         return true
     }
 
+    override fun onResume() {
+        super.onResume()
+        loadSessions()
+    }
+
     private fun setupWindowInsets() {
         ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
             val statusBarInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -105,7 +110,8 @@ class SessionLogsActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: SessionViewHolder, position: Int) {
             val archive = archives[position]
-            holder.bind(archive, position + 1, onClick)
+            // archives are stored newest-first; show oldest as Session #1
+            holder.bind(archive, archives.size - position, onClick)
         }
 
         override fun getItemCount(): Int = archives.size
@@ -119,10 +125,11 @@ class SessionLogsActivity : AppCompatActivity() {
             fun bind(archive: SessionArchive, sequence: Int, onClick: (SessionArchive) -> Unit) {
                 textSessionTitle.text = archive.label
                 textSessionNumber.text = "Session #$sequence"
-                textPrevUsed.text = "Previous Reading Used: ${archive.previousReadingUsed}"
-                textLastCurrent.text = "Last Current Reading Used: ${archive.lastCurrentReadingUsed}"
+                textPrevUsed.text = "Previous Reading Used: ${archive.previousReadingUsed} m\u00B3"
+                textLastCurrent.text = "Last Current Reading Used: ${archive.lastCurrentReadingUsed} m\u00B3"
                 itemView.setOnClickListener { onClick(archive) }
             }
         }
     }
 }
+
